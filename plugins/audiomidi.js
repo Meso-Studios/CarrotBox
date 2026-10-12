@@ -799,6 +799,208 @@
 			return curve;
 		}
 
+		// ---------------------------------------------------------------- instruments learned from the recording
+		// Every instrument in a mix keeps its own timbre: the same pattern of harmonics on every
+		// note (a sampler or a synth moves it with the pitch). Once those patterns are learned from
+		// the recording itself, a chord is explained by the right notes, and an octave or overtone
+		// "ghost" has nothing left to explain. Shift-invariant NMF: each source is one harmonic
+		// pattern, placed at every pitch it plays.
+		const HN = 24;
+		const HPOS = Float64Array.from({ length: HN + 1 }, (_, h) => h ? 12 * BPS * Math.log2(h) : 0);
+		// amplitude of each harmonic of a note (fundamental at fractional bin `pos`) in frame f
+		function harmonicAmps(V, f, pos, out) {
+			const row = f * NB;
+			for (let h = 1; h <= HN; h++) {
+				const b = pos + HPOS[h], c = Math.round(b);
+				out[h] = c >= 1 && c < NB - 1 ? Math.max(V[row + c - 1] * 0.6, V[row + c], V[row + c + 1] * 0.6) : NaN;
+			}
+			return out;
+		}
+		// The sources to look for: one per part of the first pass (bass, lead, chords, ...), each with
+		// the median harmonic pattern of its clearest notes, where no other note's harmonics land.
+		function learnSources(V, frames, notes, shift) {
+			const groups = new Map();
+			for (const n of notes) { const k = n.role || "chords"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(n); }
+			const sources = [];
+			const amps = new Float64Array(HN + 1);
+			for (const [role, list] of groups) {
+				const good = list.filter(n => n.dur >= 0.08).sort((a, b) => b.vel * Math.min(1, b.dur) - a.vel * Math.min(1, a.dur)).slice(0, 80);
+				if (good.length < 4) continue;
+				const vals = Array.from({ length: HN + 1 }, () => []);
+				for (const n of good) {
+					const f0 = Math.round(n.t * FPS), f1 = Math.round((n.t + n.dur) * FPS);
+					const others = notes.filter(o => o != n && o.t < n.t + n.dur && o.t + o.dur > n.t);
+					const pos = (n.midi - M0) * BPS + shift;
+					// harmonics of other notes that land within a bin and a half of ours are not ours
+					const clash = new Uint8Array(HN + 1);
+					for (let h = 1; h <= HN; h++) {
+						const b = pos + HPOS[h];
+						for (const o of others) {
+							const po = (o.midi - M0) * BPS + shift;
+							for (let k = 1; k <= HN; k++) { const d = po + HPOS[k] - b; if (d > 1.5) break; if (d > -1.5) { clash[h] = 1; break; } }
+							if (clash[h]) break;
+						}
+					}
+					for (let f = f0 + Math.max(1, Math.round((f1 - f0) * 0.2)); f < Math.min(frames, f0 + Math.max(2, Math.round((f1 - f0) * 0.6))); f += 2) {
+						harmonicAmps(V, f, pos, amps);
+						let ref = 0;
+						for (let h = 1; h <= 4; h++) if (!clash[h] && amps[h] > ref) ref = amps[h];
+						if (!(ref > 0)) continue;
+						for (let h = 1; h <= HN; h++) if (!clash[h] && Number.isFinite(amps[h])) vals[h].push(amps[h] / ref);
+					}
+				}
+				const a = new Float64Array(HN + 1);
+				for (let h = 1; h <= HN; h++) {
+					const v = vals[h].sort((x, y) => x - y);
+					// the lower middle: other sounds only ever add energy
+					a[h] = v.length >= 6 ? v[Math.floor(v.length * 0.4)] : Math.pow(h, -1.5) * 0.5;
+				}
+				const mids = good.map(n => n.midi).sort((x, y) => x - y);
+				sources.push({ role, a: normalizeAmps(a), lo: Math.max(P0, mids[Math.floor(mids.length * 0.03)] - 7), hi: Math.min(P1, mids[Math.floor(mids.length * 0.97)] + 7), notes: list.length });
+			}
+			return sources;
+		}
+		function normalizeAmps(a) {
+			let s = 0;
+			for (let h = 1; h <= HN; h++) s += a[h] = Math.max(1e-4, a[h]);
+			for (let h = 1; h <= HN; h++) a[h] /= s;
+			return a;
+		}
+		// Activations of every source at every pitch, frame by frame, while the sources' harmonic
+		// patterns adapt to the recording (a few rounds of EM over a subset of frames, then a full pass).
+		async function sourceActivations(V, frames, sources, shift, progress, opts = {}) {
+			const K = sources.length;
+			const lambda = opts.lambda != undefined ? opts.lambda : 0.03;
+			// per source and harmonic: bins (relative to the pitch's base bin) and weights
+			const kern = [];
+			for (let h = 1; h <= HN; h++) {
+				const pos = shift + HPOS[h], c = Math.round(pos), list = [];
+				for (let d = c - 1; d <= c + 1; d++) list.push([d, Math.exp(-0.5 * Math.pow((d - pos) / 0.55, 2))]);
+				kern.push(list);
+			}
+			const topBin = Math.min(NB - 1, Math.round((hzMidi(7900) - M0) * BPS));
+			// atoms: (source, pitch) -> bins, harmonic index, weight (normalized to sum 1)
+			const atomBins = [], atomW = [], atomH = [], atomOf = [];
+			const buildAtoms = () => {
+				atomBins.length = atomW.length = atomH.length = atomOf.length = 0;
+				for (let k = 0; k < K; k++) {
+					const s = sources[k];
+					for (let p = 0; p < NP; p++) {
+						const midi = P0 + p;
+						if (midi < s.lo || midi > s.hi) { atomBins.push(null); atomW.push(null); atomH.push(null); continue; }
+						const base = (midi - M0) * BPS, bins = [], ws = [], hs = [];
+						let z = 0;
+						for (let h = 1; h <= HN; h++) for (const [d, g] of kern[h - 1]) {
+							const b = base + d;
+							if (b < 0 || b > topBin) continue;
+							const w = s.a[h] * g;
+							bins.push(b); ws.push(w); hs.push(h); z += w;
+						}
+						atomBins.push(Int32Array.from(bins)); atomW.push(Float64Array.from(ws, w => w / (z || 1))); atomH.push(Int8Array.from(hs));
+					}
+				}
+			};
+			const atom = (k, p) => k * NP + p;
+			// broadband atoms (noise, drums the median split left behind)
+			const noiseAtoms = [];
+			for (let c = 6; c < NB; c += 24) {
+				const bins = [], ws = [];
+				let z = 0;
+				for (let b = 0; b < NB; b++) { const g = Math.exp(-0.5 * Math.pow((b - c) / 10, 2)); if (g > 0.01) { bins.push(b); ws.push(g); z += g; } }
+				noiseAtoms.push({ bins: Int32Array.from(bins), w: Float64Array.from(ws, w => w / z) });
+			}
+			let maxE = 0;
+			const energy = new Float64Array(frames);
+			for (let f = 0; f < frames; f++) { let e = 0; for (let b = 0; b < NB; b++) e += V[f * NB + b]; energy[f] = e; if (e > maxE) maxE = e; }
+			const A = sources.map(() => new Float32Array(frames * NP));
+			const vmax = (row, b) => Math.max(V[row + Math.max(0, b - 1)], V[row + b], V[row + Math.min(NB - 1, b + 1)]);
+			const Lam = new Float64Array(NB), R = new Float64Array(NB);
+			const act = [], hv = [];
+			const rounds = opts.rounds != undefined ? opts.rounds : 3;
+			let last = Date.now();
+			for (let round = 0; round <= rounds; round++) {
+				const learning = round < rounds;
+				buildAtoms();
+				const num = sources.map(() => new Float64Array(HN + 1)), den = sources.map(() => new Float64Array(HN + 1));
+				const step = learning ? 3 : 1;
+				for (let f = 0; f < frames; f += step) {
+					const E = energy[f];
+					if (E < maxE * 0.002) continue;
+					const row = f * NB;
+					// candidates: per source, pitches whose harmonics are there (matched filter)
+					act.length = 0;
+					let salMax = 0;
+					const sal = [];
+					for (let k = 0; k < K; k++) {
+						const s = sources[k];
+						for (let p = Math.max(0, s.lo - P0); p <= Math.min(NP - 1, s.hi - P0); p++) {
+							let v = 0, wsum = 0;
+							for (let h = 1; h <= 10; h++) {
+								const b = Math.round((P0 + p - M0) * BPS + shift + HPOS[h]);
+								if (b >= topBin) break;
+								v += s.a[h] * vmax(row, b); wsum += s.a[h];
+							}
+							v /= wsum || 1;
+							sal.push([v, k, p]);
+							if (v > salMax) salMax = v;
+						}
+					}
+					sal.sort((x, y) => y[0] - x[0]);
+					const chosen = new Set();
+					for (let i = 0; i < sal.length && chosen.size < 14 * K; i++) {
+						const [v, k, p] = sal[i];
+						if (v < salMax * 0.08) break;
+						for (const q of [p, p - 12, p + 12]) if (q >= 0 && q < NP && atomBins[atom(k, q)]) chosen.add(atom(k, q));
+					}
+					let salSum = 0;
+					for (const j of chosen) { const p = j % NP; salSum += 1; void p; }
+					for (const j of chosen) { act.push(j); }
+					hv.length = act.length + noiseAtoms.length;
+					for (let a = 0; a < act.length; a++) hv[a] = E * 0.85 / act.length;
+					for (let a = 0; a < noiseAtoms.length; a++) hv[act.length + a] = E * 0.15 / noiseAtoms.length;
+					for (let it = 0; it < 20; it++) {
+						Lam.fill(1e-9);
+						for (let a = 0; a < act.length; a++) { const h = hv[a]; if (h <= 0) continue; const bins = atomBins[act[a]], w = atomW[act[a]]; for (let q = 0; q < bins.length; q++) Lam[bins[q]] += h * w[q]; }
+						for (let a = 0; a < noiseAtoms.length; a++) { const h = hv[act.length + a]; const na = noiseAtoms[a]; for (let q = 0; q < na.bins.length; q++) Lam[na.bins[q]] += h * na.w[q]; }
+						for (let b = 0; b < NB; b++) R[b] = V[row + b] / Lam[b];
+						for (let a = 0; a < act.length; a++) {
+							if (hv[a] <= 0) continue;
+							const bins = atomBins[act[a]], w = atomW[act[a]];
+							let nm = 0;
+							for (let q = 0; q < bins.length; q++) nm += w[q] * R[bins[q]];
+							hv[a] *= nm / (1 + lambda);
+						}
+						for (let a = 0; a < noiseAtoms.length; a++) {
+							const na = noiseAtoms[a];
+							let nm = 0;
+							for (let q = 0; q < na.bins.length; q++) nm += na.w[q] * R[na.bins[q]];
+							hv[act.length + a] *= nm;
+						}
+					}
+					if (learning) {
+						// statistics for the harmonic patterns (EM step for the source templates)
+						Lam.fill(1e-9);
+						for (let a = 0; a < act.length; a++) { const h = hv[a]; if (h <= 0) continue; const bins = atomBins[act[a]], w = atomW[act[a]]; for (let q = 0; q < bins.length; q++) Lam[bins[q]] += h * w[q]; }
+						for (let a = 0; a < noiseAtoms.length; a++) { const h = hv[act.length + a]; const na = noiseAtoms[a]; for (let q = 0; q < na.bins.length; q++) Lam[na.bins[q]] += h * na.w[q]; }
+						for (let a = 0; a < act.length; a++) {
+							const h = hv[a];
+							if (h <= E * 0.01) continue;
+							const j = act[a], k = Math.floor(j / NP), bins = atomBins[j], w = atomW[j], hs = atomH[j];
+							for (let q = 0; q < bins.length; q++) { const r = V[row + bins[q]] / Lam[bins[q]]; num[k][hs[q]] += h * w[q] * r; den[k][hs[q]] += h * w[q]; }
+						}
+					}
+					else for (let a = 0; a < act.length; a++) { const j = act[a]; A[Math.floor(j / NP)][f * NP + (j % NP)] = hv[a]; }
+					if (Date.now() - last > 40) { progress(0.42 + 0.33 * (round + f / frames) / (rounds + 1), "Learning the instruments"); await pause(); last = Date.now(); }
+				}
+				if (learning) for (let k = 0; k < K; k++) {
+					const s = sources[k];
+					for (let h = 1; h <= HN; h++) if (den[k][h] > 0) s.a[h] *= num[k][h] / den[k][h];
+					normalizeAmps(s.a);
+				}
+			}
+			return A;
+		}
+
 		// ---------------------------------------------------------------- drums
 		function drumTemplateFromPcm(pcm) {
 			// the sound after 50 ms of silence, through the same separation the analysis uses
@@ -1133,7 +1335,27 @@
 			const T = buildTemplates(spec.tuning);
 			const act = await noteActivations(spec.V, frames, T, progress);
 			const onsetAt = pitchOnsets(spec.S1, frames);
-			const tracked = trackNotes(act, frames, onsetAt, O.env, opts, spec.V, spec.tuning);
+			let tracked = trackNotes(act, frames, onsetAt, O.env, opts, spec.V, spec.tuning);
+			// second pass: the instruments learned from the first pass's parts
+			if (opts.adaptive === true && tracked.length >= 8) {
+				const top0 = percentile(tracked.map(n => n.peak), 0.95) || 1;
+				const first = assignRoles(tracked.map(n => ({ t: n.f0 / FPS, dur: (n.f1 - n.f0) / FPS, midi: n.p, vel: Math.min(1, Math.sqrt(n.peak / top0)) })));
+				const shift = spec.tuning / 100 * BPS;
+				const sources = learnSources(spec.V, frames, first, shift);
+				if (sources.length) {
+					const As = await sourceActivations(spec.V, frames, sources, shift, progress, opts);
+					const all = [];
+					As.forEach((A, k) => {
+						for (const n of trackNotes({ A, bright: act.bright, pure: act.pure }, frames, onsetAt, O.env, opts, spec.V, spec.tuning)) { n.src = k; n.srcRole = sources[k].role; all.push(n); }
+					});
+					// the same note heard in two sources is one note (the stronger)
+					all.sort((a, b) => b.peak - a.peak);
+					const kept = [];
+					for (const n of all) if (!kept.some(m => m.p == n.p && Math.min(m.f1, n.f1) - Math.max(m.f0, n.f0) > 0.5 * Math.min(m.f1 - m.f0, n.f1 - n.f0))) kept.push(n);
+					tracked = kept.sort((a, b) => a.f0 - b.f0 || a.p - b.p);
+					tracked.sources = sources;
+				}
+			}
 			// note list in seconds, with velocity and timbre
 			const peakTop = percentile(tracked.map(n => n.peak), 0.95) || 1;
 			let notes = tracked.map(n => ({
