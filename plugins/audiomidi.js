@@ -51,6 +51,7 @@
 .cb-am-inst canvas { width: 100%; height: 34px; display: block; border-radius: 4px; background: rgba(0,0,0,0.35); }
 .cb-am-inst .cb-row { gap: 4px; flex-wrap: wrap; }
 .cb-am-inst .cb-button { padding: 2px 7px; font-size: 11px; }
+.cb-am-exact { margin: 6px 0; padding: 8px 10px; border-radius: 8px; background: rgba(155,227,107,0.12); border: 1px solid rgba(155,227,107,0.5); font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cb-am-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 10px; margin: 4px 0; opacity: 0.85; }
 .cb-am-legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; background: var(--c); }
 `);
@@ -2618,7 +2619,10 @@
 		let peak = 0;
 		for (let i = 0; i < mono.length; i++) peak = Math.max(peak, Math.abs(mono[i]));
 		if (peak > 0) for (let i = 0; i < mono.length; i++) mono[i] /= peak;
-		return { mono, bytes, seconds, channels, name: file.name };
+		// audio exported by CarrotBox carries its song: that is the exact answer
+		let embedded = null;
+		try { embedded = A.flFindSongInAudio ? A.flFindSongInAudio(bytes) : null; } catch (error) { embedded = null; }
+		return { mono, bytes, seconds, channels, name: file.name, embedded };
 	}
 
 	// ======================================================================= writing
@@ -3005,6 +3009,7 @@
 		const fileInput = HTML.input({ type: "file", accept: "audio/*,.wav,.mp3,.ogg,.oga,.flac,.m4a,.aac,.aif,.aiff,.opus,.webm", style: "display: none;" });
 		const drop = HTML.div({ class: "cb-am-drop", tabindex: "0" }, HTML.b("Drop a song here (WAV, MP3, OGG, FLAC, M4A, AIFF)"), HTML.span({ class: "cb-hint" }, "or click to choose a file. It never leaves this computer."));
 		const info = HTML.div({ class: "cb-hint", style: "min-height: 16px; margin-top: 6px;" });
+		const exact = HTML.div({ class: "cb-am-exact", style: "display: none;" });
 		const bar = HTML.div({ class: "cb-am-progress" }, HTML.div());
 		const stage = HTML.div({ class: "cb-hint", style: "min-height: 16px;" });
 		const stats = HTML.div({ class: "cb-am-stats" });
@@ -3090,6 +3095,19 @@
 			playButton.disabled = false;
 			const m = Math.floor(state.file.seconds / 60), s = Math.round(state.file.seconds % 60);
 			info.textContent = state.file.name + "  ·  " + m + ":" + String(s).padStart(2, "0") + "  ·  " + (state.file.channels > 1 ? "stereo" : "mono") + ". Press Analyze.";
+			exact.innerHTML = "";
+			exact.style.display = "none";
+			if (state.file.embedded) {
+				exact.style.display = "";
+				exact.append(HTML.b("Made with CarrotBox."), HTML.span(" This file carries its own song, so it opens exactly: every note, instrument and setting, 100% accurate. "),
+					CarrotUI.button("Open the exact song", () => {
+						const doc = host.doc;
+						if (doc.synth.playing) doc.performance.pause();
+						doc.goBackToStart();
+						doc.record(new A.ChangeSong(doc, state.file.embedded), false, true);
+						A.flToast("AudioMidi: opened the exact song from " + state.file.name + " (Z undoes)");
+					}, { primary: true, title: "Replace this song with the one inside the file (undoable)" }));
+			}
 			stats.innerHTML = "";
 			drawView();
 		}
@@ -3289,7 +3307,7 @@
 		}
 		const root = HTML.div(
 			CarrotUI.hint("AudioMidi listens to a recording and writes it as a song: the bass, lead and harmony on the song's beat grid (with glides), eleven kinds of drum hits, and the instruments themselves, rebuilt from how they sound in the recording (Replica) so they can be played and edited. Clear mixes give the closest copy."),
-			HTML.div({ style: "height: 8px;" }), drop, fileInput, info,
+			HTML.div({ style: "height: 8px;" }), drop, fileInput, info, exact,
 			CarrotUI.section("Listen for", HTML.div({ class: "cb-row cb-center" }, ...toggles)),
 			CarrotUI.section("Analysis", HTML.div({ class: "cb-row cb-center" }, drumsKnob, notesKnob, lengthSelect, HTML.label({ class: "cb-field" }, "Tempo (BPM)", bpmInput), meterSelect)),
 			CarrotUI.section("Writing", HTML.div({ class: "cb-row cb-center" }, modeSelect, sourceSelect, soundsSelect, layoutSelect, quantizeSelect, bendToggle, velocityToggle)),

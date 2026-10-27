@@ -21270,7 +21270,8 @@ var beepbox = (function (exports) {
                         }
                     }
                 }
-                const blob = new Blob([arrayBuffer], { type: "audio/wav" });
+                // the song travels inside the file, so AudioMidi can bring it back exactly
+                const blob = new Blob([flWavWithSong(arrayBuffer, this._doc.song)], { type: "audio/wav" });
                 this._downloadButton.style.display = "";
                 this._downloadButton.addEventListener("click", () => {
                     save(blob, this._fileName.value.trim() + ".wav");
@@ -21321,7 +21322,7 @@ var beepbox = (function (exports) {
                     mp3Data.push(mp3buf);
                 this._progressBar.style.display = "none";
                 this._statusMessage.style.display = "none";
-                const blob = new Blob(mp3Data, { type: "audio/mp3" });
+                const blob = new Blob([flId3WithSong(this._doc.song)].concat(mp3Data), { type: "audio/mp3" });
                 this._downloadButton.style.display = "";
                 this._downloadButton.addEventListener("click", () => {
                     save(blob, this._fileName.value.trim() + ".mp3");

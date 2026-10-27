@@ -10750,6 +10750,62 @@ var beepbox = (function (exports) {
     // ======================================================================
     const flTextEncoder = new TextEncoder();
     const flTextDecoder = new TextDecoder("utf-8");
+    // ---- the song inside exported audio
+    // A WAV export carries the song in a "cbsg" RIFF chunk and an MP3 export in an ID3v2 TXXX
+    // frame ("CarrotBox song"), so AudioMidi can bring back the exact song from CarrotBox's own
+    // audio. Both hold the marker below followed by the song URL text and a newline.
+    const FL_SONG_MARK = "CARROTBOX-SONG:1\n";
+    function flSongPayload(song) {
+        return flTextEncoder.encode(FL_SONG_MARK + song.toBase64String() + "\n");
+    }
+    function flWavWithSong(arrayBuffer, song) {
+        const payload = flSongPayload(song), pad = payload.length & 1;
+        const out = new Uint8Array(arrayBuffer.byteLength + 8 + payload.length + pad);
+        out.set(new Uint8Array(arrayBuffer), 0);
+        const view = new DataView(out.buffer);
+        let at = arrayBuffer.byteLength;
+        out.set([0x63, 0x62, 0x73, 0x67], at); // "cbsg"
+        view.setUint32(at + 4, payload.length, true);
+        out.set(payload, at + 8);
+        view.setUint32(4, out.length - 8, true);
+        return out.buffer;
+    }
+    function flId3WithSong(song) {
+        const payload = flSongPayload(song), desc = flTextEncoder.encode("CarrotBox song");
+        const frameSize = 1 + desc.length + 1 + payload.length;
+        const tag = new Uint8Array(10 + 10 + frameSize);
+        const synch = (n, at) => { tag[at] = (n >> 21) & 127; tag[at + 1] = (n >> 14) & 127; tag[at + 2] = (n >> 7) & 127; tag[at + 3] = n & 127; };
+        tag.set([0x49, 0x44, 0x33, 3, 0, 0], 0); // "ID3" v2.3
+        synch(10 + frameSize, 6);
+        tag.set([0x54, 0x58, 0x58, 0x58], 10); // "TXXX"
+        new DataView(tag.buffer).setUint32(14, frameSize, false);
+        tag[20] = 3; // UTF-8
+        tag.set(desc, 21);
+        tag.set(payload, 21 + desc.length + 1);
+        return tag;
+    }
+    // The song URL hidden in an audio file by flWavWithSong / flId3WithSong, or null.
+    function flFindSongInAudio(bytes) {
+        if (!bytes || bytes.length < 32)
+            return null;
+        const mark = flTextEncoder.encode(FL_SONG_MARK);
+        const scan = (from, to) => {
+            outer: for (let i = Math.max(0, from); i <= Math.min(bytes.length, to) - mark.length; i++) {
+                for (let k = 0; k < mark.length; k++)
+                    if (bytes[i + k] != mark[k])
+                        continue outer;
+                let end = i + mark.length;
+                while (end < bytes.length && bytes[end] != 10 && bytes[end] != 0)
+                    end++;
+                const text = flTextDecoder.decode(bytes.subarray(i + mark.length, end)).trim();
+                return text.length > 4 ? text : null;
+            }
+            return null;
+        };
+        // ID3 at the start (MP3), RIFF chunks after the audio (WAV): look at both ends first
+        const head = 4 << 20;
+        return scan(0, Math.min(bytes.length, head)) || scan(bytes.length - head, bytes.length);
+    }
     function flWriteLength(buffer, length) {
         const digits = [];
         let remaining = length;
@@ -19971,7 +20027,7 @@ FLKitLibrary._loadPromise = null;
             blurb: "Makes a lead, bass or any part bouncy: staccato, swing, octave hops, accents, pitch scoops, bouncing-ball echoes, chops, pushes and an optional sidechain pump. Eight styles, one undo step.",
         },
         {
-            id: "audiomidi", name: "AudioMidi", kind: "tool", file: "plugins/audiomidi.js", icon: "AM", color: "#00c8ff", sizeKB: 173,
+            id: "audiomidi", name: "AudioMidi", kind: "tool", file: "plugins/audiomidi.js", icon: "AM", color: "#00c8ff", sizeKB: 174,
             blurb: "Turns a WAV, MP3, OGG or FLAC into a song: finds the tempo (even when it drifts), beat, meter and key, hears every drum hit and matches it to the closest CarrotBox drum, and writes the bass, lead and chords as notes with velocity, glides and bends (the original stays muted on its own channel for A/B).",
         },
         {
@@ -33664,7 +33720,8 @@ FLKitLibrary._loadPromise = null;
                         }
                     }
                 }
-                const blob = new Blob([arrayBuffer], { type: "audio/wav" });
+                // the song travels inside the file, so AudioMidi can bring it back exactly
+                const blob = new Blob([flWavWithSong(arrayBuffer, this._doc.song)], { type: "audio/wav" });
                 this._downloadButton.style.display = "";
                 this._downloadButton.addEventListener("click", () => {
                     save(blob, this._fileName.value.trim() + ".wav");
@@ -33715,7 +33772,7 @@ FLKitLibrary._loadPromise = null;
                     mp3Data.push(mp3buf);
                 this._progressBar.style.display = "none";
                 this._statusMessage.style.display = "none";
-                const blob = new Blob(mp3Data, { type: "audio/mp3" });
+                const blob = new Blob([flId3WithSong(this._doc.song)].concat(mp3Data), { type: "audio/mp3" });
                 this._downloadButton.style.display = "";
                 this._downloadButton.addEventListener("click", () => {
                     save(blob, this._fileName.value.trim() + ".mp3");
@@ -41044,7 +41101,7 @@ You should be redirected to the song at:<br /><br />
             return carrotPluginApi._api;
         carrotPluginApi._api = {
             HTML, SVG, Config, FLConfig, CarrotDSP, CarrotADSR, CarrotSVF, CarrotBiquad, CarrotDelayLine, CarrotFX, CarrotUI,
-            CarrotWavetable, CarrotWavetableBank, FLSampleBank, FLSoundFactory, FLKitLibrary, FLLoops, FLSweepers, CarrotIdeaGen, CARROT_GEN_STYLES, carrotWriteNotes, carrotNormalizeNotes, flToast, flMidiName, flSetupCanvas, flCss, flResolve, flCloneJson,
+            CarrotWavetable, CarrotWavetableBank, FLSampleBank, FLSoundFactory, FLKitLibrary, FLLoops, FLSweepers, flFindSongInAudio, flWavWithSong, flId3WithSong, CarrotIdeaGen, CARROT_GEN_STYLES, carrotWriteNotes, carrotNormalizeNotes, flToast, flMidiName, flSetupCanvas, flCss, flResolve, flCloneJson,
             carrotFxRack, carrotWriteNotes, carrotSongScale, carrotSyncOptions, carrotSyncBeats, carrotFormatValue, carrotToNorm, carrotFromNorm,
             CarrotWindows, CarrotPlugins, carrotNewChannel, carrotNameChannel, flReadDragPayload, flDragHasPayload, flDragHasFiles, CarrotHardware, CarrotRecorder, flEncodeWav, flParseWav, CarrotKitLoader,
             // song editing (for tools that write into the song)
