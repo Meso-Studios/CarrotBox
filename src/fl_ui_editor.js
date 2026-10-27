@@ -222,6 +222,9 @@
                 case "saveProject":
                     flSaveProject(doc);
                     return true;
+                case "mySongs":
+                    carrotOpen(editor, "flMySongs");
+                    return true;
                 case "kitLoader":
                     carrotOpen(editor, "flKits");
                     return true;
@@ -367,7 +370,9 @@
         doc.record(group);
         flToast("Humanized note volumes", 1200);
     }
-    async function flSaveProject(doc) {
+    // The song as a project object: the song JSON plus the imported samples it uses
+    // (Save Project + Samples and My Songs > Save current song write the same thing).
+    async function flProjectJson(doc) {
         const json = doc.song.toJsonObject(true, 1, true);
         const samples = [];
         let failed = 0;
@@ -382,6 +387,10 @@
         }
         if (samples.length > 0)
             json["samples"] = samples;
+        return { json, samples, failed };
+    }
+    async function flSaveProject(doc) {
+        const { json, samples, failed } = await flProjectJson(doc);
         const blob = new Blob([JSON.stringify(json)], { type: "application/json" });
         const name = (doc.song.channels[0].name || "CarrotBox-Project").replace(/[\\/:*?"<>|]+/g, "_");
         save(blob, name + ".json");

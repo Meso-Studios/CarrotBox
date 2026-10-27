@@ -99,6 +99,9 @@
         static async payloadToSampleId(payload) {
             if (payload.id)
                 return payload.id;
+            // a row dragged out of My Songs
+            if (payload.mySong && typeof CarrotMySongs != "undefined")
+                return CarrotMySongs.toSampleId(payload.mySong);
             if (payload.kitId) {
                 await FLKitLibrary.load();
                 const kit = FLKitLibrary.kits.find(k => k.id == payload.kitId);

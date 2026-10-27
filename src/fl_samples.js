@@ -8,6 +8,11 @@
     //              (.json) embed the bytes so they can be shared.
     // ======================================================================
     class FLStore {
+        // The database is opened at whatever version it has. Its version is only raised
+        // when one of FLStore._stores is missing, and then only the missing stores are
+        // created, so builds that add stores never fight over the version number or lose
+        // data. Other tabs may upgrade it later: this tab closes its connection when asked
+        // and reopens it on the next use.
         static _open() {
             if (FLStore._dbPromise)
                 return FLStore._dbPromise;
@@ -16,21 +21,72 @@
                     reject(new Error("IndexedDB is not available"));
                     return;
                 }
-                const request = indexedDB.open("beepbox-fl", 1);
-                request.onupgradeneeded = () => {
-                    const db = request.result;
-                    if (!db.objectStoreNames.contains("samples"))
-                        db.createObjectStore("samples", { keyPath: "id" });
-                    if (!db.objectStoreNames.contains("kits"))
-                        db.createObjectStore("kits", { keyPath: "id" });
-                    if (!db.objectStoreNames.contains("kitFiles"))
-                        db.createObjectStore("kitFiles");
+                let attempts = 0;
+                const missingIn = (db) => FLStore._stores.filter(([name]) => !db.objectStoreNames.contains(name));
+                const openAt = (version) => {
+                    let request;
+                    try {
+                        request = version == undefined ? indexedDB.open("beepbox-fl") : indexedDB.open("beepbox-fl", version);
+                    }
+                    catch (error) {
+                        reject(error);
+                        return;
+                    }
+                    request.onupgradeneeded = () => {
+                        const db = request.result;
+                        for (const [name, options] of missingIn(db))
+                            db.createObjectStore(name, options || undefined);
+                    };
+                    request.onsuccess = () => {
+                        const db = request.result;
+                        if (missingIn(db).length > 0 && attempts++ < 4) {
+                            const next = db.version + 1;
+                            db.close();
+                            openAt(next);
+                            return;
+                        }
+                        db.onversionchange = () => {
+                            db.close();
+                            if (FLStore._db === db) {
+                                FLStore._db = null;
+                                FLStore._dbPromise = null;
+                            }
+                        };
+                        FLStore._db = db;
+                        resolve(db);
+                    };
+                    request.onblocked = () => {
+                        if (typeof flToast == "function")
+                            flToast("Close the other CarrotBox tabs to finish updating this browser's storage.", 6000);
+                    };
+                    request.onerror = () => {
+                        // another tab upgraded it in the meantime: open the current version
+                        if (request.error && request.error.name == "VersionError" && attempts++ < 4) {
+                            openAt(undefined);
+                            return;
+                        }
+                        reject(request.error);
+                    };
                 };
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
+                openAt(undefined);
             });
             FLStore._dbPromise.catch((error) => console.warn("BeepBox FL storage unavailable:", error));
             return FLStore._dbPromise;
+        }
+        // One transaction over several stores. `action(tx)` queues the requests; a request it
+        // returns gives the result. Resolves when the transaction has completed.
+        static async run(storeNames, mode, action) {
+            const db = await FLStore._open();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(storeNames, mode);
+                let result;
+                const request = action(tx);
+                if (request && typeof request == "object" && "onsuccess" in request)
+                    request.onsuccess = () => { result = request.result; };
+                tx.oncomplete = () => resolve(result);
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error || new Error("The browser storage transaction was cancelled."));
+            });
         }
         static async _tx(storeName, mode, action) {
             const db = await FLStore._open();
@@ -65,6 +121,9 @@
             return FLStore._tx(storeName, "readwrite", (store) => store.delete(IDBKeyRange.bound(prefix, prefix + "￿")));
         }
     }
+    // [name, createObjectStore options]. mySongs / mySongFiles hold the My Songs library.
+    FLStore._stores = [["samples", { keyPath: "id" }], ["kits", { keyPath: "id" }], ["kitFiles", null], ["mySongs", { keyPath: "id" }], ["mySongFiles", null]];
+    FLStore._db = null;
     class FLSampleBank {
         static get(id) {
             return id == null ? undefined : FLSampleBank._entries.get(id);

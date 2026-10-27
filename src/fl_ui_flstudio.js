@@ -585,6 +585,7 @@ html.carrot-fl .cfl-top {
                     items.push(["Melody / rhythm generator", () => carrotOpen(editor, "flLeadGen"), "G"]);
                     items.push(["Drum kit generator / loader", () => carrotOpen(editor, "flKits"), "K"]);
                     items.push(["Audio recorder", () => carrotOpen(editor, "flRecorder")]);
+                    items.push(["My Songs", () => carrotOpen(editor, "flMySongs"), "Shift+O"]);
                     items.push(["SP-404MKII / MIDI devices", () => CarrotHardwarePanel.open(editor)]);
                     items.push(["Plugin manager", () => CarrotPluginManager.open(editor)]);
                     break;

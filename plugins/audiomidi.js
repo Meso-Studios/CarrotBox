@@ -3776,6 +3776,11 @@
 			bar, stage, stats, instSection, legend, canvas,
 			HTML.div({ class: "cb-row", style: "justify-content: flex-end; margin-top: 8px; gap: 6px;" }, playButton, stopButton, analyzeButton, writeButton));
 		setTimeout(drawView, 0);
+		// a song handed over by My Songs (or another tool)
+		const takeFile = (file) => { if (file) { window.__carrotPendingAudioMidiFile = null; load(file); } };
+		const onLoad = (e) => { if (!root.isConnected) { window.removeEventListener("carrot-audiomidi-load", onLoad); return; } takeFile(e.detail && e.detail.file); };
+		window.addEventListener("carrot-audiomidi-load", onLoad);
+		setTimeout(() => takeFile(window.__carrotPendingAudioMidiFile), 0);
 		return root;
 	}
 

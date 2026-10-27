@@ -557,6 +557,43 @@ function check(label, ok, detail) {
 		return out;
 	}, {"url": "an31s0k0l00e03t2ma7g0fj07r1i0o432T6v1ub8f0q0x10p71d23W7E2b925T1v1u62f0qwx10s811d08A0F0B0Q00adPfe39E4b761862863bT1v1ub6f10p7q011d23A5F4BbQ0001Peec8E362363479T2v1u15f10w4qw02d03w0E0b8Q400000000zgg00000002d1000000008Q400000000p28HNPtfGxksDjRlmpYxIGGPa21pllC8ZPaGwZ4OV6ihMahrdTrSx6ANp98J8zihQyeEhQyeHQWBAYZJXuQ8-kKp4v62eMhQyeDQVJBYFXKTJ2fCeo4v62eIhQye_SjkYevjhZsjTgzUDyK1cJ9EQXdkzN8uyqD49aq4At6NIruPIr6NIrfFJdzoSdzrStzoSdzpZdxIr6NIqbIX6NIr6PWqCSdzoSd4StzoSdzp3XAQpMNFB0Ml8F6Olwj7J1twaPaleji5UENYi5S0KQoZAbIr9mENXgno2XhzSgJ9l4Fl6ilUCz8E_7UAoYE5Se8UENYjIshAsko-9Se8UANXeko-9Se8oB9DCz7PfcsNAsko-9Se8Oeacv4X74silGcv51tzyfOea6fymNN6hNhzUDoUwbNhzUDye8UANXeko-9Se8VCuqcvcYNP6hNhzUDoUwbNhzUDye8UANXeko-9Se8VCvOuq6fCgnyeoUENYjIshAsko-9Se8UANXeko-9Se8Ouacv5r74kBsDyz7NeNN0nyz7Nf4shN9zSsENYjIshPcw", "notes": ["0/0/0/96/43.48.52/0:0:3,96:0:3", "0/0/96/192/43.48.52/0:0:2,96:0:2", "0/1/0/96/43.47.50/0:0:3,96:0:3", "0/1/96/192/43.47.50/0:0:2,96:0:2", "0/2/0/96/40.45.48/0:0:3,96:0:3", "0/2/96/192/40.45.48/0:0:2,96:0:2", "0/3/0/96/41.45.48/0:0:3,96:0:3", "0/3/96/192/41.45.48/0:0:2,96:0:2", "1/0/0/6/45/0:0:3,6:0:3", "1/0/6/18/48/0:0:2,12:0:2", "1/0/18/24/43/0:0:2,6:0:2", "1/0/24/30/50/0:0:3,6:0:3", "1/0/30/42/45/0:0:2,12:0:2", "1/0/42/48/43/0:0:2,6:0:2", "1/0/60/90/40/0:0:2,30:0:2", "1/0/90/96/43/0:0:2,6:0:2", "1/0/108/120/48/0:0:2,12:0:2", "1/0/132/144/50/0:0:2,12:0:2", "1/0/156/168/48/0:0:2,12:0:2", "1/0/180/192/50/0:0:2,12:0:2", "1/1/0/6/40/0:0:3,6:0:3", "1/1/6/18/43/0:0:2,12:0:2", "1/1/18/24/38/0:0:2,6:0:2", "1/1/24/30/45/0:0:3,6:0:3", "1/1/30/42/40/0:0:2,12:0:2", "1/1/42/48/38/0:0:2,6:0:2", "1/1/60/90/38/0:0:2,30:0:2", "1/1/90/96/38/0:0:2,6:0:2", "1/1/108/120/50/0:0:2,12:0:2", "1/1/132/144/45/0:0:2,12:0:2", "1/1/156/168/50/0:0:2,12:0:2", "1/1/180/192/52/0:0:2,12:0:2", "1/2/0/18/52/0:0:3,18:0:3", "1/2/18/24/55/0:0:2,6:0:2", "1/2/24/36/50/0:0:3,12:0:3", "1/2/36/48/55/0:0:2,12:0:2", "1/2/48/54/52/0:0:3,6:0:3", "1/2/66/72/55/0:0:2,6:0:2", "1/2/72/84/50/0:0:3,12:0:3", "1/2/84/96/57/0:0:2,12:0:2"]});
 	check("old songs keep their notes at 48 parts per beat; 32nd/64th rhythms; 7/8, 5/4 and 15/16 round-trip", timing.same && timing.rhythms >= 3 && timing.meters.every(Boolean), JSON.stringify(timing));
+	// ---- My Songs: upload an audio song and a project, use them, survive a reload, delete
+	const ms1 = await page.evaluate(async () => {
+		const M = beepbox.CarrotMySongs, A = beepbox.CarrotAPI, doc = editor.doc;
+		const win = M.open(editor);
+		const sr = 22050, x = new Float32Array(sr * 2);
+		for (let i = 0; i < x.length; i++) x[i] = 0.3 * Math.sin(2 * Math.PI * 220 * i / sr);
+		const wav = new File([A.flEncodeWav([x], sr)], "smoke-tone.wav");
+		const audio = await M.add(wav);
+		const project = await M.add(new File([JSON.stringify(doc.song.toJsonObject())], "smoke-song.json"));
+		const before = doc.song.getChannelCount();
+		await win._referenceTrack(audio);
+		const ref = doc.song.getChannelCount() == before + 1 && doc.song.channels[doc.song.pitchChannelCount - 1].muted;
+		await new Promise(r => setTimeout(r, 100));
+		doc.undo();
+		await new Promise(r => setTimeout(r, 300));
+		const undone = doc.song.getChannelCount() == before;
+		await win._toAudioMidi(audio);
+		await new Promise(r => setTimeout(r, 800));
+		const am = [...document.querySelectorAll(".cb-window")].some(w => /AudioMidi/.test(w.textContent) && /smoke-tone/.test(w.textContent));
+		beepbox.CarrotWindows.closeAll();
+		return { audio: audio.kind == "audio" && Math.abs(audio.duration - 2) < 0.05 && audio.peaks.length == 200, project: project.kind == "project", ref, undone, am, ids: [audio.id, project.id] };
+	});
+	await page.reload();
+	await page.waitForFunction(() => typeof editor != "undefined", null, { timeout: 20000 });
+	await page.waitForTimeout(500);
+	const ms2 = await page.evaluate(async (ids) => {
+		const M = beepbox.CarrotMySongs, list = await M.list();
+		const kept = ids.every(id => list.some(e => e.id == id));
+		const win = M.open(editor);
+		await win._openSong(list.find(e => e.id == ids[1]));
+		const opened = editor.doc.song.getChannelCount() > 0;
+		for (const id of ids) await M.remove(id);
+		const gone = (await M.list()).every(e => !ids.includes(e.id));
+		beepbox.CarrotWindows.closeAll();
+		return { kept, opened, gone };
+	}, ms1.ids);
+	check("My Songs: upload, reference track (undoable), AudioMidi hand-off, survives a reload, opens a project, deletes", ms1.audio && ms1.project && ms1.ref && ms1.undone && ms1.am && ms2.kept && ms2.opened && ms2.gone, JSON.stringify([ms1, ms2]));
 	check("no errors in the console", errors.length == 0, errors.slice(0, 5).join(" | "));
 	await browser.close();
 	server.close();

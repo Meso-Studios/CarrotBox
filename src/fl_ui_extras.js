@@ -468,12 +468,12 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
                         [k("F6"), "Channel rack"], [k("F7"), "Piano roll"], [k("F9"), "Mixer (instead of master effects)"], [k("F10"), "Settings"], [k("F1"), "This list"], [k("L"), "Pattern / song mode"],
                     ]],
                 ["Tools", [
-                        [k("K"), "Drum kit generator / loader"], [k("G"), "Melody / rhythm generator"], [k(","), "CarrotBox settings"], [k("?"), "This list"], [k("Ctrl", "S"), "Export song"], [k("Ctrl", "O"), "Import song"],
+                        [k("K"), "Drum kit generator / loader"], [k("G"), "Melody / rhythm generator"], [k(","), "CarrotBox settings"], [k("?"), "This list"], [k("Ctrl", "S"), "Export song"], [k("Ctrl", "O"), "Import song"], [k("⇧", "O"), "My Songs (uploads and local saves)"],
                     ]],
             ];
             const body = HTML.div();
             if (!extra)
-                body.appendChild(CarrotUI.hint("Extra shortcuts (K, G, E, B, T, comma, ?) are turned off in Settings."));
+                body.appendChild(CarrotUI.hint("Extra shortcuts (K, G, E, B, T, comma, ?, Shift+O) are turned off in Settings."));
             for (const [title, items] of groups) {
                 body.appendChild(HTML.h3({ style: "margin: 10px 0 4px;" }, title));
                 body.appendChild(HTML.div({ class: "carrot-shortcuts" }, ...items.map(([keys, label]) => item(keys, label))));
@@ -2133,6 +2133,7 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
             case "flLeadGen": return CarrotGeneratorPanel.open(editor);
             case "flRecorder": return CarrotRecorder.open(editor);
             case "flHardware": return CarrotHardwarePanel.open(editor);
+            case "flMySongs": return CarrotMySongs.open(editor);
         }
         editor._openPrompt(name);
         return null;
@@ -2171,6 +2172,11 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
         if (shift && (key == "Q" || key == "q")) {
             doc.selection.forceRhythm();
             flToast("Snapped notes to the rhythm grid");
+            event.preventDefault();
+            return true;
+        }
+        if (shift && (key == "O" || key == "o")) {
+            CarrotMySongs.open(editor);
             event.preventDefault();
             return true;
         }
@@ -2233,6 +2239,7 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
     function carrotInitEditor(editor) {
         const doc = editor.doc;
         CarrotFLStudio.install(editor);
+        CarrotMySongs.install(editor);
         carrotApplySettings();
         carrotInstallBeatPulse(editor);
         carrotInstallUISounds();
