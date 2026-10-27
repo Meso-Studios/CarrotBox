@@ -670,6 +670,29 @@
 				}
 				split.push({ p: n.p, f0: start, f1: n.f1, peak: n.peak });
 			}
+			// repeats on the beat grid: where a sixteenth step falls inside a held note and the pitch
+			// dips and comes back with an attack, the note was played again
+			const gridF = opts._gridFrames;
+			if (gridF && gridF.length && opts.gridSplit !== false) {
+				const ratio = opts.splitRatio || 1.15, othr = opts.splitOnset != undefined ? opts.splitOnset : 0.1;
+				const again = [];
+				for (const n of split) {
+					const pi = n.p - P0;
+					let start = n.f0;
+					for (const g of gridF) {
+						if (g <= start + Math.round(0.06 * FPS)) continue;
+						if (g >= n.f1 - Math.round(0.04 * FPS)) break;
+						let dip = Infinity, up = 0, o = 0;
+						for (let f = Math.max(start, g - 4); f < g; f++) dip = Math.min(dip, S[f * NP + pi]);
+						for (let f = g + 1; f <= Math.min(frames - 1, g + 4); f++) up = Math.max(up, S[f * NP + pi]);
+						for (let f = g - 2; f <= g + 2; f++) o = Math.max(o, onsetAt(n.p, f));
+						if (up > ratio * dip && o > othr && up > 0.3 * n.peak) { again.push({ p: n.p, f0: start, f1: g, peak: n.peak }); start = g; }
+					}
+					again.push({ p: n.p, f0: start, f1: n.f1, peak: n.peak });
+				}
+				split.length = 0;
+				for (const n of again) split.push(n);
+			}
 			// refine onsets: back to where the note starts rising, then to the sharpest pitch onset nearby
 			const out = [];
 			for (const n of split) {
@@ -1561,7 +1584,14 @@
 			progress(0.36, "Hearing the notes");
 			const T = buildTemplates(spec.tuning);
 			const act = await noteActivations(spec.V, frames, T, progress);
+			if (opts.debugAct) opts.debugAct.act = act, opts.debugAct.spec = spec;
 			const onsetAt = pitchOnsets(spec.S1, frames);
+			// sixteenth steps of the beat map, for re-attacks on the grid
+			{
+				const gf = [], b = grid.beats;
+				for (let i = 0; i + 1 < b.length; i++) for (let k = 0; k < 4; k++) gf.push(Math.round((b[i] + (b[i + 1] - b[i]) * k / 4) * FPS));
+				opts._gridFrames = gf;
+			}
 			let tracked = trackNotes(act, frames, onsetAt, O.env, opts, spec.V, spec.tuning);
 			// second pass: the instruments learned from the first pass's parts
 			if (opts.adaptive === true && tracked.length >= 8) {
@@ -1763,7 +1793,7 @@
 				timbre[role] = { bright: +avg("bright").toFixed(3), pure: +avg("pure").toFixed(3), sustain: +avg("sustain").toFixed(3), meanDur: +meanDur.toFixed(3), glides: list.filter(n => n.bend).length / list.length };
 			}
 			progress(0.98, "Arranging the parts");
-			const arr = arrange({ act, frames, onsetAt, notes, hits: drums.hits, beats, startBeat, bpb, chords, duration: x.length / SR, sens: opts.notes });
+			const arr = arrange({ act, frames, onsetAt, notes, hits: drums.hits, beats, startBeat, bpb, chords, duration: x.length / SR, sens: opts.notes, precision });
 			progress(0.99, "Measuring the instruments");
 			await pause();
 			const instruments = opts.instruments === false ? {} : extractInstruments(x, notes, drums.hits, spec.tuning);
@@ -1781,7 +1811,8 @@
 		// the whole song (no fragments, no gaps), block chords from the harmony, and drum patterns
 		// made consistent with how they repeat.
 		function arrange(c) {
-			const { act, frames, onsetAt, hits, beats, startBeat, bpb, chords, duration } = c, sens = c.sens == undefined ? 0.5 : c.sens;
+			const opts_swing = c.swing;
+			const { act, frames, onsetAt, hits, beats, startBeat, bpb, chords, duration } = c, sens = c.sens == undefined ? 0.5 : c.sens, prec = c.precision == undefined ? 0.7 : c.precision;
 			const LEAD_VEL = 0.7, BASS_VEL = 0.75, CH_SHORT = 3;
 			// chords are struck together: a lone note in the chord part, up where the melody plays and
 			// while the melody is silent, is a melody note
@@ -1815,8 +1846,23 @@
 			};
 			const f4 = fits(4), f3 = fits(3);
 			const S = f3.err < f4.err * 0.75 && f3.off > 0.2 ? 3 : 4;
+			// swing: where the off sixteenths really land inside each eighth (0.5 = straight)
+			let swing = 0;
+			if (S == 4 && opts_swing !== false) {
+				const us = [];
+				const add = (t, w) => { const b = beatAt(t), u = ((b * 2) % 1 + 1) % 1; if (u > 0.3 && u < 0.85) us.push([u, w]); };
+				for (const n of notes) if (n.vel > 0.25) add(n.t, n.vel);
+				for (const h of hits) add(h.t, h.vel);
+				if (us.length >= 12) {
+					us.sort((a, b) => a[0] - b[0]);
+					let tot = 0; for (const u of us) tot += u[1];
+					let acc = 0, med = 0.5;
+					for (const [u, w] of us) { acc += w; if (acc >= tot / 2) { med = u; break; } }
+					if (med - 0.5 > 0.04) swing = Math.min(0.2, med - 0.5);
+				}
+			}
 			const stepT = [];
-			for (let i = 0; i + 1 < beats.length; i++) for (let k = 0; k < S; k++) stepT.push(beats[i] + (beats[i + 1] - beats[i]) * k / S);
+			for (let i = 0; i + 1 < beats.length; i++) for (let k = 0; k < S; k++) stepT.push(beats[i] + (beats[i + 1] - beats[i]) * (k / S + (k % 2 ? swing / 2 : 0)));
 			stepT.push(beats[beats.length - 1]);
 			const nSteps = stepT.length - 1;
 			const stepOf = (t) => {
@@ -1883,19 +1929,21 @@
 				const merged = [];
 				for (const n of list) {
 					const prev = merged.filter(m => m.midi == n.midi && m.s1 >= n.s0 - 1 && m.s0 <= n.s0).pop();
-					if (prev && (n.onset < 0.3 || n.s0 < prev.s1)) { prev.s1 = Math.max(prev.s1, n.s1); prev.vel = Math.max(prev.vel, n.vel); continue; }
+					// (only notes that overlap and come back without an attack: the earlier stages already
+					// joined what was one note, and a repeat on the grid is a new note)
+					if (prev && n.s0 < prev.s1 && n.onset < 0.15) { prev.s1 = Math.max(prev.s1, n.s1); prev.vel = Math.max(prev.vel, n.vel); continue; }
 					merged.push(n);
 				}
 				list = merged;
 				// confidence: what the parts sound like when they are wrong (measured on rendered songs):
 				// quiet melody notes, one-step bass blips, and short chord notes struck on their own
-				const q = 1 - 0.8 * (sens - 0.5);
+				const q = (1 - 0.8 * (sens - 0.5)) * (0.35 + 0.65 * prec);
 				if (role == "lead") list = list.filter(n => n.vel >= LEAD_VEL * q || n.s1 - n.s0 >= 4);
 				else if (role == "bass") list = list.filter(n => n.s1 - n.s0 > 1 || n.vel >= BASS_VEL * q);
 				else if (role == "chords") {
 					const at = new Map();
 					for (const n of list) for (const d of [-1, 0, 1]) at.set(n.s0 + d, (at.get(n.s0 + d) || 0) + 1);
-					list = list.filter(n => n.s1 - n.s0 > CH_SHORT || at.get(n.s0) >= 3 || n.vel >= 0.95);
+					list = list.filter(n => n.s1 - n.s0 > CH_SHORT || at.get(n.s0) >= (prec > 0.85 ? 3 : 2) || n.vel >= 0.95 * (0.5 + 0.5 * prec));
 				}
 				// a single voice: a note ends where the next one starts; two at once keep the louder
 				if (mono) {
@@ -1990,7 +2038,7 @@
 			drumsOut.sort((a, b) => a.t - b.t);
 			const r4 = (v) => +v.toFixed(4);
 			const clean = (list) => list.filter(n => n.dur > 0).map(n => ({ t: r4(n.t), dur: r4(n.dur), midi: n.midi, vel: +Math.min(1, n.vel).toFixed(3), role: n.role, bend: n.bend }));
-			return { grid: S, bass: clean(bass), lead: clean(lead), chords: clean(chordNotes), drums: drumsOut.map(d => ({ t: r4(d.t), kind: d.kind, vel: +d.vel.toFixed(3) })) };
+			return { grid: S, swing: +swing.toFixed(3), bass: clean(bass), lead: clean(lead), chords: clean(chordNotes), drums: drumsOut.map(d => ({ t: r4(d.t), kind: d.kind, vel: +d.vel.toFixed(3) })) };
 		}
 
 		// ---------------------------------------------------------------- instruments
