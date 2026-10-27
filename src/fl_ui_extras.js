@@ -575,7 +575,7 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
                 return null;
             };
             for (const item of FLSoundFactory.getCatalog()) {
-                if (/^(Loops|Instruments|FX)\//.test(item.path) || /\/(Melodic|FX|Vocal Chops|Loops?)\//.test(item.path) || /Synth One-Shots|Chord Stabs|FX Toolkit|Vocal Chops|Foley/.test(item.path))
+                if (/^(Loops|Instruments|FX)\//.test(item.path) || /\/(Melodic|FX|Vocal Chops|Loops?)\//.test(item.path) || /Synth One-Shots|Chord Stabs|FX Toolkit|FX Sweepers|Vocal Chops|Foley/.test(item.path))
                     continue;
                 if (/808s In Every Key/.test(item.path))
                     continue;

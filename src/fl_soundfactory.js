@@ -848,6 +848,8 @@
         static getInfo(key) {
             if (key && key.startsWith("ll/"))
                 return FLLoops.infoForKey(key);
+            if (key && key.startsWith("sw/"))
+                return FLSweepers.infoForKey(key);
             if (!FLSoundFactory._byKey) {
                 FLSoundFactory._byKey = new Map();
                 for (const item of flCatalog)
@@ -860,6 +862,8 @@
                 return FLSoundFactory._cache.get(key);
             if (key.startsWith("ll/"))
                 return FLLoops.renderKey(key); // Live Loops keep their own cache (they can be large)
+            if (key.startsWith("sw/"))
+                return FLSweepers.renderKey(key); // so do tempo-synced FX sweeps
             const info = FLSoundFactory.getInfo(key);
             if (!info)
                 return null;

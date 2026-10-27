@@ -19,7 +19,7 @@
             blurb: "Grow sounds instead of programming them: plant a seed, explore its mutated branches, edit the sound's DNA, or let it grow a patch that imitates a sample.",
         },
         {
-            id: "synthvault", name: "Synth Vault", kind: "instrument", file: "plugins/synthvault.js", alt: "Analog Lab Pro", icon: "SV", color: "#ff8a2a", sizeKB: 112,
+            id: "synthvault", name: "Synth Vault", kind: "instrument", file: "plugins/synthvault.js", alt: "Analog Lab Pro", icon: "SV", color: "#ff8a2a", sizeKB: 120,
             blurb: "114 ready-to-play sounds from nine classic-instrument engines (ladder monosynth, poly analog, dual-layer CS, 6-op FM, tine and reed electric pianos and a clav, acoustic piano, tonewheel organ with rotary speaker, string machine, tape replay) in one browser with types, characters, likes and previews, four macros, Multi split/layer and an FX rack.",
         },
         {
