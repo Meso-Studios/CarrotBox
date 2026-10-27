@@ -14,6 +14,7 @@
         extraShortcuts: true,
         uiScale: 100,
         reduceMotion: false,
+        beatPulse: true,
         openPluginOnLoad: true,
         welcomeSeen: false,
     };
@@ -51,6 +52,68 @@
         const scale = CarrotSettings.get("uiScale") / 100;
         if (container)
             container.style.zoom = scale == 1 ? "" : String(scale);
+    }
+    // ------------------------------------------------------------- beat pulse
+    // A white aura around the note editor that pulses with the drums while the song plays:
+    // each kick, snare or clap that starts lights it up, other drum hits a little.
+    function carrotInstallBeatPulse(editor) {
+        const doc = editor.doc;
+        const target = editor._patternEditorRow;
+        if (!target || carrotInstallBeatPulse._on)
+            return;
+        carrotInstallBeatPulse._on = true;
+        target.classList.add("carrot-pulse-target");
+        let last = -1, level = 0, lastT = performance.now(), shown = -1;
+        const strength = (song, c, note) => {
+            const size = (note.pins.length ? note.pins[0].size : Config.noteSizeMax) / Config.noteSizeMax;
+            const inst = song.channels[c].instruments[0];
+            let main = note.pitches[0] <= 2;
+            const pads = inst && inst.fl && inst.fl.fpc && inst.type == FLConfig.typeFPC ? inst.fl.fpc.pads : null;
+            if (pads) {
+                const pad = pads[note.pitches[0]];
+                main = !!pad && /kick|snare|clap|\bbd\b|\bsd\b/i.test((pad.sampleId || "") + " " + (pad.name || ""));
+            }
+            return (main ? 1 : 0.45) * (0.45 + 0.55 * size);
+        };
+        const frame = (now) => {
+            const dt = Math.min(0.1, (now - lastT) / 1000);
+            lastT = now;
+            level *= Math.exp(-dt / 0.13);
+            const on = CarrotSettings.get("beatPulse") && !CarrotSettings.get("reduceMotion");
+            const synth = doc.synth, song = doc.song;
+            if (on && synth.playing && song) {
+                const barParts = song.beatsPerBar * Config.partsPerBeat;
+                const pos = synth.playhead * barParts;
+                if (last >= 0 && pos >= last && pos - last < barParts) {
+                    const b0 = Math.floor(last / barParts), b1 = Math.floor(pos / barParts);
+                    for (let c = song.pitchChannelCount; c < song.getChannelCount(); c++) {
+                        const ch = song.channels[c];
+                        if (ch.muted)
+                            continue;
+                        for (let b = b0; b <= b1 && b < song.barCount; b++) {
+                            const pattern = song.getPattern(c, b);
+                            if (!pattern)
+                                continue;
+                            for (const note of pattern.notes) {
+                                const at = b * barParts + note.start;
+                                if (at > last && at <= pos)
+                                    level = Math.max(level, strength(song, c, note));
+                            }
+                        }
+                    }
+                }
+                last = pos;
+            }
+            else
+                last = -1;
+            const v = Math.round(level * 100) / 100;
+            if (v != shown) {
+                target.style.setProperty("--cb-pulse", String(v));
+                shown = v;
+            }
+            requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
     }
     // ------------------------------------------------------------- UI sounds
     // Tiny synthesized clicks and chimes, on their own audio context so they
@@ -200,6 +263,9 @@
 .carrot-gen-buttons { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .carrot-gen-buttons .cb-button:disabled { opacity: 0.4; }
 .carrot-welcome p { margin: 4px 0; font-size: 12px; line-height: 1.4; }
+/* --------------------------------------------------------------- beat pulse */
+.carrot-pulse-target { --cb-pulse: 0; border-radius: 4px; box-shadow: 0 0 calc(5px + 26px * var(--cb-pulse)) calc(1px + 5px * var(--cb-pulse)) rgba(255, 255, 255, calc(0.14 + 0.7 * var(--cb-pulse))), inset 0 0 calc(2px + 10px * var(--cb-pulse)) rgba(255, 255, 255, calc(0.04 + 0.18 * var(--cb-pulse))); }
+html.carrot-reduce-motion .carrot-pulse-target { --cb-pulse: 0 !important; }
 /* --------------------------------------------------------------- modern skin */
 html.carrot-modern, html.carrot-modern body { font-family: "Inter", "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
 html.carrot-modern #beepboxEditorContainer { border-radius: 16px; margin-top: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.35); }
@@ -325,7 +391,7 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
             })), row("Layout", "BeepBox's layouts (wide, tall, focus…).", CarrotUI.button("Choose…", () => {
                 this.close();
                 editor._openPrompt("layout");
-            })), row("Reduce motion", "Turns off animations.", t("reduceMotion"))), section("Sound", row("UI sounds", "Soft clicks when you press buttons, open windows and generate ideas.", HTML.div({ style: "display: flex; align-items: center; gap: 6px;" }, volume, t("uiSounds"))), row("Metronome volume", "Toggle the metronome with its toolbar button or T.", metronome)), section("Workflow", row("Extra keyboard shortcuts", "K kits, G generator, E edit plugin, B browser, T metronome, , settings, ? help (Tab, F5, F8, F9 always work).", t("extraShortcuts")), row("Open plugin window when loading a plugin", "Turn off to load plugins without opening their window.", t("openPluginOnLoad")), row("Show messages", "The little notices at the bottom of the editor.", t("toasts")), row("Warn before leaving", "Ask for confirmation when you close or reload the page with edits that weren't saved or exported.", t("confirmLeave")), row("Show play state in the page title", "The browser tab says Playing while the song plays.", t("playingTitle")), row("Keyboard shortcuts", "", CarrotUI.button("Show list…", () => {
+            })), row("Reduce motion", "Turns off animations.", t("reduceMotion")), row("Beat pulse", "A white glow around the note editor that pulses with the drums while the song plays.", t("beatPulse"))), section("Sound", row("UI sounds", "Soft clicks when you press buttons, open windows and generate ideas.", HTML.div({ style: "display: flex; align-items: center; gap: 6px;" }, volume, t("uiSounds"))), row("Metronome volume", "Toggle the metronome with its toolbar button or T.", metronome)), section("Workflow", row("Extra keyboard shortcuts", "K kits, G generator, E edit plugin, B browser, T metronome, , settings, ? help (Tab, F5, F8, F9 always work).", t("extraShortcuts")), row("Open plugin window when loading a plugin", "Turn off to load plugins without opening their window.", t("openPluginOnLoad")), row("Show messages", "The little notices at the bottom of the editor.", t("toasts")), row("Warn before leaving", "Ask for confirmation when you close or reload the page with edits that weren't saved or exported.", t("confirmLeave")), row("Show play state in the page title", "The browser tab says Playing while the song plays.", t("playingTitle")), row("Keyboard shortcuts", "", CarrotUI.button("Show list…", () => {
                 this.close();
                 CarrotShortcutsPanel.open(editor);
             })), row("Hardware", "Roland SP-404MKII and other USB MIDI devices: pads, tempo sync, sequencing, audio and samples.", CarrotUI.button("SP-404MKII / MIDI…", () => {
@@ -2168,6 +2234,7 @@ html.carrot-reduce-motion *, html.carrot-reduce-motion *::before { transition: n
         const doc = editor.doc;
         CarrotFLStudio.install(editor);
         carrotApplySettings();
+        carrotInstallBeatPulse(editor);
         carrotInstallUISounds();
         // Second toolbar row: kits, plugins, recorder, generator.
         editor._carrotKitButton = flIconButton("--carrot-kit-symbol", "Drum kit / sound kit loader (K)");

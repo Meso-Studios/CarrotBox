@@ -16471,8 +16471,14 @@ var beepbox = (function (exports) {
             this.flBrowserOpen = this._loadBoolean("flBrowserOpen", false);
             this.flSplit = Math.max(25, Math.min(80, Number(window.localStorage.getItem("flSplit") || "55")));
             this.keyboardLayout = window.localStorage.getItem("keyboardLayout") || "wickiHayden";
-            this.layout = window.localStorage.getItem("layout") || "small";
-            this.colorTheme = window.localStorage.getItem("colorTheme") || "dark classic";
+            this.layout = window.localStorage.getItem("layout") || "long";
+            this.colorTheme = window.localStorage.getItem("colorTheme") || "FL Studio High Contrast";
+            // CarrotBox 5: wide layout and the FL Studio High Contrast theme become the defaults (applied once)
+            if (window.localStorage.getItem("carrotDefaults5") == null) {
+                this.layout = "long";
+                this.colorTheme = "FL Studio High Contrast";
+                try { window.localStorage.setItem("carrotDefaults5", "1"); window.localStorage.setItem("layout", "long"); window.localStorage.setItem("colorTheme", this.colorTheme); } catch (error) { }
+            }
             this.visibleOctaves = (window.localStorage.getItem("visibleOctaves") >>> 0) || Preferences.defaultVisibleOctaves;
             const defaultScale = Config.scales.dictionary[window.localStorage.getItem("defaultScale")];
             this.defaultScale = (defaultScale != undefined) ? defaultScale.index : 0;
@@ -19283,7 +19289,7 @@ var beepbox = (function (exports) {
 						<rect x="20" y="2" width="4" height="10" fill="currentColor"/>
 						<rect x="2" y="13" width="22" height="5" fill="currentColor"/>
 					</svg>
-				`), div$a("Long")), label$2({ class: "layout-option" }, input$8({ type: "radio", name: "layout", value: "tall" }), SVG(`\
+				`), div$a("Wide")), label$2({ class: "layout-option" }, input$8({ type: "radio", name: "layout", value: "tall" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="11" y="2" width="8" height="16" fill="currentColor"/>

@@ -189,7 +189,7 @@ html.carrot-fl .cfl-top {
                     window.localStorage.setItem("carrot:flPrev", JSON.stringify({ theme: prefs.colorTheme, layout: prefs.layout, view: prefs.flView }));
                 }
                 catch (error) { }
-                prefs.colorTheme = "FL Studio";
+                if (!/^FL Studio/.test(prefs.colorTheme)) prefs.colorTheme = "FL Studio High Contrast";
                 ColorConfig.setTheme(prefs.colorTheme);
                 if (prefs.layout == "small")
                     prefs.layout = "long";
