@@ -2148,7 +2148,7 @@
             return carrotPluginApi._api;
         carrotPluginApi._api = {
             HTML, SVG, Config, FLConfig, CarrotDSP, CarrotADSR, CarrotSVF, CarrotBiquad, CarrotDelayLine, CarrotFX, CarrotUI,
-            CarrotWavetable, CarrotWavetableBank, FLSampleBank, FLSoundFactory, FLKitLibrary, FLLoops, FLSweepers, flFindSongInAudio, flWavWithSong, flId3WithSong, CarrotIdeaGen, CARROT_GEN_STYLES, carrotWriteNotes, carrotNormalizeNotes, flToast, flMidiName, flSetupCanvas, flCss, flResolve, flCloneJson,
+            CarrotWavetable, CarrotWavetableBank, FLSampleBank, FLSoundFactory, FLKitLibrary, FLLoops, FLSweepers, flFindSongInAudio, flWavWithSong, flId3WithSong, carrotTimeSig, carrotSetTimeSig, carrotBeatGroups, carrotGroupStarts, carrotQuarterBpm, ChangeTimeSignature, CarrotIdeaGen, CARROT_GEN_STYLES, carrotWriteNotes, carrotNormalizeNotes, flToast, flMidiName, flSetupCanvas, flCss, flResolve, flCloneJson,
             carrotFxRack, carrotWriteNotes, carrotSongScale, carrotSyncOptions, carrotSyncBeats, carrotFormatValue, carrotToNorm, carrotFromNorm,
             CarrotWindows, CarrotPlugins, carrotNewChannel, carrotNameChannel, flReadDragPayload, flDragHasPayload, flDragHasFiles, CarrotHardware, CarrotRecorder, flEncodeWav, flParseWav, CarrotKitLoader,
             // song editing (for tools that write into the song)

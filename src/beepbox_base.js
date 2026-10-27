@@ -86,7 +86,7 @@ var beepbox = (function (exports) {
     ]);
     Config.blackKeyNameParents = [-1, 1, -1, 1, -1, 1, -1, -1, 1, -1, 1, -1];
     Config.tempoMin = 30;
-    Config.tempoMax = 300;
+    Config.tempoMax = 1200; // CarrotBox: x/8 and x/16 meters count eighths or sixteenths (the URL stores up to 4095)
     Config.echoDelayRange = 24;
     Config.echoDelayStepTicks = 4;
     Config.echoSustainRange = 8;
@@ -97,25 +97,38 @@ var beepbox = (function (exports) {
     Config.reverbRange = 4;
     Config.reverbDelayBufferSize = 16384;
     Config.reverbDelayBufferMask = Config.reverbDelayBufferSize - 1;
-    Config.beatsPerBarMin = 3;
-    Config.beatsPerBarMax = 16;
+    // CarrotBox: 1 to 32 beats per bar (the URL stores beatsPerBar - 1 in one base64 digit, so up to 64 would fit).
+    Config.beatsPerBarMin = 1;
+    Config.beatsPerBarMax = 32;
     Config.barCountMin = 1;
     Config.barCountMax = 128;
     Config.instrumentCountMin = 1;
     Config.layeredInstrumentCountMax = 4;
     Config.patternInstrumentCountMax = 10;
-    Config.partsPerBeat = 24;
-    Config.ticksPerPart = 2;
+    // CarrotBox: 48 parts per beat (was 24) so a 64th note (1/16 beat = 3 parts) fits on the grid.
+    // Ticks per beat stay 48 (one tick per part), so synth timing, envelopes, arpeggios and echo are
+    // unchanged. Songs saved with 24 parts per beat (URL version <= 10, old JSON, old FL data) are
+    // converted when they are read: Config.legacyPartsPerBeat is that old resolution.
+    Config.partsPerBeat = 48;
+    Config.ticksPerPart = 1;
+    Config.legacyPartsPerBeat = 24;
+    // The rhythm index is stored in song URLs: keep the order and only ever append. "freehand" is
+    // every part (stepsPerBeat == partsPerBeat). roundUpThresholds are in parts.
     Config.rhythms = toNameMap([
-        { name: "÷3 (triplets)", stepsPerBeat: 3, ticksPerArpeggio: 4, arpeggioPatterns: [[0], [0, 0, 1, 1], [0, 1, 2, 1]], roundUpThresholds: [5, 12, 18] },
-        { name: "÷4 (standard)", stepsPerBeat: 4, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 0, 1, 1], [0, 1, 2, 1]], roundUpThresholds: [3, 9, 17, 21] },
-        { name: "÷6", stepsPerBeat: 6, ticksPerArpeggio: 4, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
-        { name: "÷8", stepsPerBeat: 8, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
-        { name: "freehand", stepsPerBeat: 24, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
-        { name: "÷2", stepsPerBeat: 2, ticksPerArpeggio: 4, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
-        { name: "÷12", stepsPerBeat: 12, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
+        { name: "÷3 (triplets)", stepsPerBeat: 3, ticksPerArpeggio: 4, arpeggioPatterns: [[0], [0, 0, 1, 1], [0, 1, 2, 1]], roundUpThresholds: [10, 24, 36] },
+        { name: "÷4 (standard)", stepsPerBeat: 4, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 0, 1, 1], [0, 1, 2, 1]], roundUpThresholds: [6, 18, 34, 42] },
+        { name: "÷6 (16th triplets)", stepsPerBeat: 6, ticksPerArpeggio: 4, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
+        { name: "÷8 (32nd notes)", stepsPerBeat: 8, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
+        { name: "freehand", stepsPerBeat: Config.partsPerBeat, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null, freehand: true },
+        { name: "÷2 (8th notes)", stepsPerBeat: 2, ticksPerArpeggio: 4, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
+        { name: "÷12 (32nd triplets)", stepsPerBeat: 12, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
         { name: "÷1 (beats)", stepsPerBeat: 1, ticksPerArpeggio: 6, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
+        { name: "÷16 (64th notes)", stepsPerBeat: 16, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
+        { name: "÷24 (64th triplets)", stepsPerBeat: 24, ticksPerArpeggio: 3, arpeggioPatterns: [[0], [0, 1], [0, 1, 2, 1]], roundUpThresholds: null },
     ]);
+    Config.freehandRhythm = 4;
+    // Steps per beat a rhythm had in the 24-parts-per-beat format (freehand was 24 there).
+    Config.legacyStepsPerBeat = (rhythm) => Config.rhythms[rhythm].freehand ? Config.legacyPartsPerBeat : Config.rhythms[rhythm].stepsPerBeat;
     Config.instrumentTypeNames = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "PWM", "Picked String", "supersaw", "sampler", "3xOsc", "FPC", "Slicex", "plugin"];
     Config.instrumentTypeHasSpecialInterval = [true, true, false, false, false, true, false, false, false, false, false, false, false, false];
     Config.chipBaseExpression = 0.03375;
@@ -203,7 +216,7 @@ var beepbox = (function (exports) {
     Config.chorusMaxDelay = Config.chorusDelayRange * (1.0 + Config.chorusDelayOffsets[0].concat(Config.chorusDelayOffsets[1]).reduce((x, y) => Math.max(x, y)));
     Config.chords = toNameMap([
         { name: "simultaneous", customInterval: false, arpeggiates: false, strumParts: 0, singleTone: false },
-        { name: "strum", customInterval: false, arpeggiates: false, strumParts: 1, singleTone: false },
+        { name: "strum", customInterval: false, arpeggiates: false, strumParts: 2, singleTone: false },
         { name: "arpeggio", customInterval: false, arpeggiates: true, strumParts: 0, singleTone: true },
         { name: "custom interval", customInterval: true, arpeggiates: false, strumParts: 0, singleTone: true },
     ]);
@@ -5384,6 +5397,10 @@ var beepbox = (function (exports) {
             const beforeEight = version < 8;
             const beforeNine = version < 9;
             const beforeTen = version < 10;
+            // CarrotBox: versions up to 10 count 24 parts per beat. Decode them in that resolution
+            // (all the limits below), then scale the notes to Config.partsPerBeat.
+            const beforeEleven = version < 11;
+            const decodePartsPerBeat = beforeEleven ? Config.legacyPartsPerBeat : Config.partsPerBeat;
             this.initToDefault(beforeNine);
             if (beforeThree) {
                 for (const channel of this.channels) {
@@ -5474,7 +5491,7 @@ var beepbox = (function (exports) {
                             else {
                                 this.tempo = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | (base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                             }
-                            this.tempo = clamp(Config.tempoMin, Config.tempoMax + 1, this.tempo);
+                            this.tempo = clamp(Config.tempoMin, (beforeEleven ? 300 : Config.tempoMax) + 1, this.tempo);
                         }
                         break;
                     case 109:
@@ -5493,7 +5510,10 @@ var beepbox = (function (exports) {
                             else {
                                 this.beatsPerBar = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] + 1;
                             }
-                            this.beatsPerBar = Math.max(Config.beatsPerBarMin, Math.min(Config.beatsPerBarMax, this.beatsPerBar));
+                            if (beforeEleven)
+                                this.beatsPerBar = Math.max(3, Math.min(16, this.beatsPerBar));
+                            else
+                                this.beatsPerBar = Math.max(Config.beatsPerBarMin, Math.min(Config.beatsPerBarMax, this.beatsPerBar));
                         }
                         break;
                     case 103:
@@ -5571,7 +5591,7 @@ var beepbox = (function (exports) {
                         break;
                     case 114:
                         {
-                            this.rhythm = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                            this.rhythm = clamp(0, Config.rhythms.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                         }
                         break;
                     case 111:
@@ -6302,7 +6322,7 @@ var beepbox = (function (exports) {
                                     const newNotes = newPattern.notes;
                                     let noteCount = 0;
                                     const totalNoteCount = beforeTen ? -1 : bits.readLongTail(1, 0);
-                                    while (beforeTen ? (curPart < this.beatsPerBar * Config.partsPerBeat) : (noteCount < totalNoteCount)) {
+                                    while (beforeTen ? (curPart < this.beatsPerBar * decodePartsPerBeat) : (noteCount < totalNoteCount)) {
                                         const useOldShape = bits.read(1) == 1;
                                         let newNote = false;
                                         let shapeIndex = 0;
@@ -6315,14 +6335,14 @@ var beepbox = (function (exports) {
                                         if (!useOldShape && !newNote) {
                                             if (beforeTen) {
                                                 const restLength = beforeSeven
-                                                    ? bits.readLegacyPartDuration() * Config.partsPerBeat / Config.rhythms[this.rhythm].stepsPerBeat
+                                                    ? bits.readLegacyPartDuration() * decodePartsPerBeat / Config.legacyStepsPerBeat(this.rhythm)
                                                     : bits.readPartDuration();
                                                 curPart += restLength;
                                             }
                                             else {
                                                 const backwards = bits.read(1) == 1;
                                                 const distance = bits.readPartDuration();
-                                                curPart = validateRange(0, this.beatsPerBar * Config.partsPerBeat, curPart + (backwards ? -distance : distance));
+                                                curPart = validateRange(0, this.beatsPerBar * decodePartsPerBeat, curPart + (backwards ? -distance : distance));
                                             }
                                         }
                                         else {
@@ -6347,7 +6367,7 @@ var beepbox = (function (exports) {
                                                     if (pinObj.pitchBend)
                                                         shape.bendCount++;
                                                     shape.length += beforeSeven
-                                                        ? bits.readLegacyPartDuration() * Config.partsPerBeat / Config.rhythms[this.rhythm].stepsPerBeat
+                                                        ? bits.readLegacyPartDuration() * decodePartsPerBeat / Config.legacyStepsPerBeat(this.rhythm)
                                                         : bits.readPartDuration();
                                                     pinObj.time = shape.length;
                                                     pinObj.size = bits.read(bitsPerNoteSize);
@@ -6435,10 +6455,12 @@ var beepbox = (function (exports) {
                                             else {
                                                 note.continuesLastPattern = false;
                                             }
-                                            curPart = validateRange(0, this.beatsPerBar * Config.partsPerBeat, note.end);
+                                            curPart = validateRange(0, this.beatsPerBar * decodePartsPerBeat, note.end);
                                         }
                                     }
                                     newNotes.length = noteCount;
+                                    if (decodePartsPerBeat != Config.partsPerBeat)
+                                        Song.scaleNoteParts(newNotes, Config.partsPerBeat / decodePartsPerBeat);
                                 }
                                 if (beforeThree) {
                                     break;
@@ -6592,7 +6614,12 @@ var beepbox = (function (exports) {
             let importedPartsPerBeat = 4;
             if (jsonObject["ticksPerBeat"] != undefined) {
                 importedPartsPerBeat = (jsonObject["ticksPerBeat"] | 0) || 4;
-                this.rhythm = Config.rhythms.findIndex(rhythm => rhythm.stepsPerBeat == importedPartsPerBeat);
+                // CarrotBox: before version 11 "freehand" was 24 ticks per beat (now ÷24 is 64th triplets).
+                const legacyJson = !((+jsonObject["version"]) >= 11);
+                if (legacyJson && importedPartsPerBeat == Config.legacyPartsPerBeat)
+                    this.rhythm = Config.freehandRhythm;
+                else
+                    this.rhythm = Config.rhythms.findIndex(rhythm => rhythm.stepsPerBeat == importedPartsPerBeat);
                 if (this.rhythm == -1) {
                     this.rhythm = 1;
                 }
@@ -6718,10 +6745,23 @@ var beepbox = (function (exports) {
         static getNeededBits(maxValue) {
             return 32 - Math.clz32(Math.ceil(maxValue + 1) - 1);
         }
+        // CarrotBox: rescales note times (start, end, pin times) from one parts-per-beat resolution to
+        // another, e.g. from the old 24 parts per beat (factor 2).
+        static scaleNoteParts(notes, factor) {
+            if (factor == 1)
+                return;
+            for (const note of notes) {
+                note.start = Math.round(note.start * factor);
+                note.end = Math.round(note.end * factor);
+                for (const pin of note.pins)
+                    pin.time = Math.round(pin.time * factor);
+            }
+        }
     }
     Song._format = "BeepBox";
     Song._oldestVersion = 2;
-    Song._latestVersion = 10;
+    // CarrotBox: version 11 = 48 parts per beat (see Config.partsPerBeat).
+    Song._latestVersion = 11;
     class PickedString {
         constructor() {
             this.delayLine = null;
@@ -8131,12 +8171,15 @@ var beepbox = (function (exports) {
                     this.flFreeBeat += runLength / flSamplesPerBeat;
                 }
                 if (this.enableMetronome || this.countInMetronome) {
+                    // CarrotBox: the first beat of the bar clicks high and loud, the first beat of each
+                    // beat group (time signature grouping, e.g. 2+2+3) in the middle, the others low.
+                    // A click keeps sounding after its first part (a part is only one tick long now).
                     if (this.part == 0) {
                         if (!this.startedMetronome) {
-                            const midBeat = (song.beatsPerBar > 4 && (song.beatsPerBar % 2 == 0) && this.beat == song.beatsPerBar / 2);
-                            const periods = (this.beat == 0) ? 8 : midBeat ? 6 : 4;
-                            const hz = (this.beat == 0) ? 1600 : midBeat ? 1200 : 800;
-                            const amplitude = ((this.beat == 0) ? 0.06 : midBeat ? 0.05 : 0.04) * this.metronomeVolume;
+                            const accent = carrotMetronomeAccent(song, this.beat);
+                            const periods = accent == 2 ? 8 : accent == 1 ? 6 : 4;
+                            const hz = accent == 2 ? 1600 : accent == 1 ? 1200 : 800;
+                            const amplitude = (accent == 2 ? 0.06 : accent == 1 ? 0.05 : 0.04) * this.metronomeVolume;
                             const samplesPerPeriod = this.samplesPerSecond / hz;
                             const radiansPerSample = Math.PI * 2.0 / samplesPerPeriod;
                             this.metronomeSamplesRemaining = Math.floor(samplesPerPeriod * periods);
@@ -8145,20 +8188,20 @@ var beepbox = (function (exports) {
                             this.metronomePrevAmplitude = 0.0;
                             this.startedMetronome = true;
                         }
-                        if (this.metronomeSamplesRemaining > 0) {
-                            const stopIndex = Math.min(runEnd, bufferIndex + this.metronomeSamplesRemaining);
-                            this.metronomeSamplesRemaining -= stopIndex - bufferIndex;
-                            for (let i = bufferIndex; i < stopIndex; i++) {
-                                outputDataL[i] += this.metronomeAmplitude;
-                                outputDataR[i] += this.metronomeAmplitude;
-                                const tempAmplitude = this.metronomeFilter * this.metronomeAmplitude - this.metronomePrevAmplitude;
-                                this.metronomePrevAmplitude = this.metronomeAmplitude;
-                                this.metronomeAmplitude = tempAmplitude;
-                            }
-                        }
                     }
                     else {
                         this.startedMetronome = false;
+                    }
+                    if (this.metronomeSamplesRemaining > 0) {
+                        const stopIndex = Math.min(runEnd, bufferIndex + this.metronomeSamplesRemaining);
+                        this.metronomeSamplesRemaining -= stopIndex - bufferIndex;
+                        for (let i = bufferIndex; i < stopIndex; i++) {
+                            outputDataL[i] += this.metronomeAmplitude;
+                            outputDataR[i] += this.metronomeAmplitude;
+                            const tempAmplitude = this.metronomeFilter * this.metronomeAmplitude - this.metronomePrevAmplitude;
+                            this.metronomePrevAmplitude = this.metronomeAmplitude;
+                            this.metronomeAmplitude = tempAmplitude;
+                        }
                     }
                 }
                 for (let i = bufferIndex; i < runEnd; i++) {
@@ -8232,7 +8275,7 @@ var beepbox = (function (exports) {
                 limit = 0.0;
             this.limit = limit;
             if (playSong && !this.countInMetronome) {
-                this.playheadInternal = (((this.tick + 1.0 - this.tickSampleCountdown / samplesPerTick) / 2.0 + this.part) / Config.partsPerBeat + this.beat) / song.beatsPerBar + this.bar;
+                this.playheadInternal = (((this.tick + 1.0 - this.tickSampleCountdown / samplesPerTick) / Config.ticksPerPart + this.part) / Config.partsPerBeat + this.beat) / song.beatsPerBar + this.bar;
             }
         }
         freeTone(tone) {
@@ -16041,6 +16084,7 @@ var beepbox = (function (exports) {
             }
             const selectionCopy = {
                 "partDuration": this.patternSelectionActive ? this.patternSelectionEnd - this.patternSelectionStart : this._doc.song.beatsPerBar * Config.partsPerBeat,
+                "partsPerBeat": Config.partsPerBeat,
                 "channels": channels,
             };
             window.localStorage.setItem("selectionCopy", JSON.stringify(selectionCopy));
@@ -16050,6 +16094,16 @@ var beepbox = (function (exports) {
             if (selectionCopy == null)
                 return;
             const channelCopies = selectionCopy["channels"] || [];
+            // CarrotBox: copies made before 48 parts per beat have no "partsPerBeat" (they used 24).
+            const copiedPartsPerBeat = (selectionCopy["partsPerBeat"] >>> 0) || Config.legacyPartsPerBeat;
+            if (copiedPartsPerBeat != Config.partsPerBeat) {
+                const factor = Config.partsPerBeat / copiedPartsPerBeat;
+                selectionCopy["partDuration"] = Math.round((selectionCopy["partDuration"] >>> 0) * factor);
+                for (const channelCopy of channelCopies)
+                    for (const key of Object.keys((channelCopy && channelCopy["patterns"]) || {}))
+                        if (Array.isArray(channelCopy["patterns"][key]["notes"]))
+                            Song.scaleNoteParts(channelCopy["patterns"][key]["notes"], factor);
+            }
             const copiedPartDuration = selectionCopy["partDuration"] >>> 0;
             const group = new ChangeGroup();
             const fillSelection = this.boxSelectionActive;
@@ -17241,7 +17295,9 @@ var beepbox = (function (exports) {
             this._svgPlayhead = SVG.rect({ x: "0", y: "0", width: "4", fill: ColorConfig.playhead, "pointer-events": "none" });
             this._selectionRect = SVG.rect({ fill: ColorConfig.boxSelectionFill, stroke: ColorConfig.hoverPreview, "stroke-width": 2, "stroke-dasharray": "5, 3", "pointer-events": "none", display: "none" });
             this._svgPreview = SVG.path({ fill: "none", stroke: ColorConfig.hoverPreview, "stroke-width": "2", "pointer-events": "none" });
-            this._svg = SVG.svg({ style: `background-color: ${ColorConfig.editorBackground}; touch-action: pan-y; position: absolute;`, width: "100%", height: "100%" }, SVG.defs(this._svgNoteBackground, this._svgDrumBackground), this._svgBackground, this._selectionRect, this._svgNoteContainer, this._svgPreview, this._svgPlayhead);
+            // CarrotBox: lines where a beat group starts (time signature grouping, e.g. 2+2+3)
+            this._carrotGroupLines = SVG.g({ "pointer-events": "none" });
+            this._svg = SVG.svg({ style: `background-color: ${ColorConfig.editorBackground}; touch-action: pan-y; position: absolute;`, width: "100%", height: "100%" }, SVG.defs(this._svgNoteBackground, this._svgDrumBackground), this._svgBackground, this._carrotGroupLines, this._selectionRect, this._svgNoteContainer, this._svgPreview, this._svgPlayhead);
             this.container = HTML.div({ style: "height: 100%; overflow:hidden; position: relative; flex-grow: 1; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;" }, this._svg);
             this._pointers = new EasyPointers(this._svg, { holdStillMinMillis: 800 });
             this._backgroundPitchRows = [];
@@ -17492,14 +17548,16 @@ var beepbox = (function (exports) {
                             let defaultLength = minDivision;
                             for (let i = minDivision; i <= this._doc.song.beatsPerBar * Config.partsPerBeat; i += minDivision) {
                                 if (minDivision == 1) {
-                                    if (i < 5) ;
+                                    // (lengths in 24ths of a beat, scaled to the current resolution)
+                                    const k = Config.partsPerBeat / 24;
+                                    if (i < 5 * k) ;
                                     else if (i <= Config.partsPerBeat / 2.0) {
-                                        if (i % 3 != 0 && i % 4 != 0) {
+                                        if (i % (3 * k) != 0 && i % (4 * k) != 0) {
                                             continue;
                                         }
                                     }
                                     else if (i <= Config.partsPerBeat * 1.5) {
-                                        if (i % 6 != 0 && i % 8 != 0) {
+                                        if (i % (6 * k) != 0 && i % (8 * k) != 0) {
                                             continue;
                                         }
                                     }
@@ -18248,6 +18306,16 @@ var beepbox = (function (exports) {
                 this._selectionRect.setAttribute("height", "" + this._editorHeight);
             }
             const beatWidth = this._editorWidth / this._doc.song.beatsPerBar;
+            {
+                const starts = carrotGroupStarts(this._doc.song);
+                const key = starts.join(",") + "|" + beatWidth + "|" + this._editorHeight;
+                if (this._carrotGroupKey != key) {
+                    this._carrotGroupKey = key;
+                    this._carrotGroupLines.innerHTML = "";
+                    for (const beat of starts)
+                        this._carrotGroupLines.appendChild(SVG.rect({ x: "" + (beat * beatWidth - 1), y: "0", width: "2", height: "" + this._editorHeight, fill: ColorConfig.primaryText, "fill-opacity": "0.35" }));
+                }
+            }
             if (this._renderedBeatWidth != beatWidth || this._renderedPitchHeight != this._pitchHeight) {
                 this._renderedBeatWidth = beatWidth;
                 this._renderedPitchHeight = this._pitchHeight;
@@ -21341,13 +21409,17 @@ var beepbox = (function (exports) {
         }
         _exportToMidi() {
             const song = this._doc.song;
-            const midiTicksPerBeepBoxTick = 2;
+            // CarrotBox: a beat is a 1/den note (time signature), MIDI counts quarter notes. Keep 96
+            // MIDI ticks per quarter for x/4 songs (as before) and enough ticks for every part otherwise.
+            const timeSig = carrotTimeSig(song);
+            const midiTicksPerBeepBoxTick = 2 * Math.max(1, timeSig.den / 4);
             const midiTicksPerBeat = midiTicksPerBeepBoxTick * Config.ticksPerPart * Config.partsPerBeat;
+            const midiTicksPerQuarter = midiTicksPerBeat * timeSig.den / 4;
             const midiTicksPerPart = midiTicksPerBeepBoxTick * Config.ticksPerPart;
             const secondsPerMinute = 60;
             const microsecondsPerMinute = secondsPerMinute * 1000000;
             const beatsPerMinute = song.getBeatsPerMinute();
-            const microsecondsPerBeat = Math.round(microsecondsPerMinute / beatsPerMinute);
+            const microsecondsPerBeat = Math.round(microsecondsPerMinute / carrotQuarterBpm(song));
             const midiTicksPerBar = midiTicksPerBeat * song.beatsPerBar;
             const pitchBendRange = 24;
             const defaultNoteVelocity = 90;
@@ -21388,7 +21460,7 @@ var beepbox = (function (exports) {
             writer.writeUint32(6);
             writer.writeUint16(1);
             writer.writeUint16(tracks.length);
-            writer.writeUint16(midiTicksPerBeat);
+            writer.writeUint16(midiTicksPerQuarter);
             for (const track of tracks) {
                 writer.writeUint32(1297379947);
                 const { isMeta, channel, midiChannel, isNoise, isDrumset } = track;
@@ -21423,9 +21495,9 @@ var beepbox = (function (exports) {
                     writer.writeUint8(255);
                     writer.writeMidi7Bits(88);
                     writer.writeMidiVariableLength(4);
-                    writer.writeUint8(song.beatsPerBar);
-                    writer.writeUint8(2);
-                    writer.writeUint8(24);
+                    writer.writeUint8(timeSig.num);
+                    writer.writeUint8(Math.round(Math.log2(timeSig.den)));
+                    writer.writeUint8(96 / timeSig.den);
                     writer.writeUint8(8);
                     const isMinor = Config.scales[song.scale].flags[3] && !Config.scales[song.scale].flags[4];
                     const key = song.key;
@@ -21948,6 +22020,7 @@ You should be redirected to the song at:<br /><br />
             const noteSizeEvents = [[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []];
             let microsecondsPerBeat = 500000;
             let beatsPerBar = 8;
+            let timeSigDen = 4;
             let numSharps = 0;
             let isMinor = false;
             let currentMidiTick = 0;
@@ -22088,12 +22161,10 @@ You should be redirected to the song at:<br /><br />
                                             track.reader.readUint8();
                                             track.reader.readUint8();
                                             track.reader.skipBytes(length - 4);
-                                            beatsPerBar = numerator * 4;
-                                            while ((beatsPerBar & 1) == 0 && (denominatorExponent > 0 || beatsPerBar > Config.beatsPerBarMax) && beatsPerBar >= Config.beatsPerBarMin * 2) {
-                                                beatsPerBar = beatsPerBar >> 1;
-                                                denominatorExponent = denominatorExponent - 1;
-                                            }
-                                            beatsPerBar = Math.max(Config.beatsPerBarMin, Math.min(Config.beatsPerBarMax, beatsPerBar));
+                                            // CarrotBox: keep the real time signature (numerator beats of 1/denominator).
+                                            const timeSig = carrotTimeSigFromMidi(numerator, denominatorExponent);
+                                            beatsPerBar = timeSig.num;
+                                            timeSigDen = timeSig.den;
                                         }
                                         else if (message == 89) {
                                             numSharps = track.reader.readInt8();
@@ -22150,8 +22221,10 @@ You should be redirected to the song at:<br /><br />
                 }
             }
             const microsecondsPerMinute = 60 * 1000 * 1000;
-            const beatsPerMinute = Math.max(Config.tempoMin, Math.min(Config.tempoMax, Math.round(microsecondsPerMinute / microsecondsPerBeat)));
-            const midiTicksPerPart = midiTicksPerBeat / Config.partsPerBeat;
+            // MIDI tempo and ticks count quarter notes; a song beat is a 1/timeSigDen note.
+            const beatsPerMinute = Math.max(Config.tempoMin, Math.min(Config.tempoMax, Math.round(microsecondsPerMinute / microsecondsPerBeat * timeSigDen / 4)));
+            const midiTicksPerSongBeat = midiTicksPerBeat * 4 / timeSigDen;
+            const midiTicksPerPart = midiTicksPerSongBeat / Config.partsPerBeat;
             const partsPerBar = Config.partsPerBeat * beatsPerBar;
             const songTotalBars = Math.ceil(currentMidiTick / midiTicksPerPart / partsPerBar);
             function quantizeMidiTickToPart(midiTick) {
@@ -22300,8 +22373,8 @@ You should be redirected to the song at:<br /><br />
                             let createdNote = false;
                             for (let bar = startBar; bar < endBar; bar++) {
                                 const barStartPart = bar * partsPerBar;
-                                const barStartMidiTick = bar * beatsPerBar * midiTicksPerBeat;
-                                const barEndMidiTick = (bar + 1) * beatsPerBar * midiTicksPerBeat;
+                                const barStartMidiTick = bar * beatsPerBar * midiTicksPerSongBeat;
+                                const barEndMidiTick = (bar + 1) * beatsPerBar * midiTicksPerSongBeat;
                                 const noteStartPart = Math.max(0, prevEventPart - barStartPart);
                                 const noteEndPart = Math.min(partsPerBar, nextEventPart - barStartPart);
                                 const noteStartMidiTick = Math.max(barStartMidiTick, prevEventMidiTick);
@@ -22537,6 +22610,8 @@ You should be redirected to the song at:<br /><br />
                     const song = doc.song;
                     song.tempo = beatsPerMinute;
                     song.beatsPerBar = beatsPerBar;
+                    song.fl.timeSigDen = timeSigDen;
+                    song.fl.beatGroups = [];
                     song.key = key;
                     song.scale = 11;
                     song.rhythm = 1;
@@ -22869,7 +22944,9 @@ You should be redirected to the song at:<br /><br />
             this._echoSustainRow = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("echoSustain") }, "Echo:"), this._echoSustainSlider.container);
             this._echoDelaySlider = new Slider(input({ style: "margin: 0;", type: "range", min: "0", max: Config.echoDelayRange - 1, value: "0", step: "1" }), this.doc, (oldValue, newValue) => new ChangeEchoDelay(this.doc, oldValue, newValue));
             this._echoDelayRow = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("echoDelay") }, "Echo Delay:"), this._echoDelaySlider.container);
-            this._rhythmSelect = select(...Config.rhythms.map((rhythm, index) => ({ rhythm, index })).sort((a, b) => (a.rhythm.stepsPerBeat == 24 ? 99 : a.rhythm.stepsPerBeat) - (b.rhythm.stepsPerBeat == 24 ? 99 : b.rhythm.stepsPerBeat)).map(entry => option({ value: entry.index }, entry.rhythm.name)));
+            // CarrotBox: time signature (meter) picker, filled in render()
+            this._meterSelect = select({ title: "Time signature: beats per bar / the note a beat is, and how the beats are grouped" });
+            this._rhythmSelect = select(...Config.rhythms.map((rhythm, index) => ({ rhythm, index })).sort((a, b) => (a.rhythm.freehand ? 999 : a.rhythm.stepsPerBeat) - (b.rhythm.freehand ? 999 : b.rhythm.stepsPerBeat)).map(entry => option({ value: entry.index }, entry.rhythm.name)));
             this._pitchedPresetSelect = buildPresetOptions(false);
             this._drumPresetSelect = buildPresetOptions(true);
             this._algorithmSelect = buildOptions(select(), Config.algorithms.map(algorithm => algorithm.name));
@@ -22955,7 +23032,7 @@ You should be redirected to the song at:<br /><br />
             this._barScrollBar = new BarScrollBar(this.doc, this._trackAndMuteContainer);
             this._trackArea = div({ class: "track-area" }, this._trackAndMuteContainer, this._barScrollBar.container);
             this._menuArea = div({ class: "menu-area" }, div({ class: "selectContainer menu file" }, this._fileMenu), div({ class: "selectContainer menu edit" }, this._editMenu), div({ class: "selectContainer menu preferences" }, this._optionsMenu));
-            this._songSettingsArea = div({ class: "song-settings-area" }, div({ class: "editor-controls" }, div({ style: `margin: 3px 0; text-align: center; color: ${ColorConfig.secondaryText};` }, "Song Settings"), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("scale") }, "Scale:"), div({ class: "selectContainer" }, this._scaleSelect)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("key") }, "Key:"), div({ class: "selectContainer" }, this._keySelect)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("tempo") }, "Tempo:"), span({ style: "display: flex;" }, this._tempoSlider.container, this._tempoStepper)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("rhythm") }, "Rhythm:"), div({ class: "selectContainer" }, this._rhythmSelect))));
+            this._songSettingsArea = div({ class: "song-settings-area" }, div({ class: "editor-controls" }, div({ style: `margin: 3px 0; text-align: center; color: ${ColorConfig.secondaryText};` }, "Song Settings"), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("scale") }, "Scale:"), div({ class: "selectContainer" }, this._scaleSelect)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("key") }, "Key:"), div({ class: "selectContainer" }, this._keySelect)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("tempo") }, "Tempo:"), span({ style: "display: flex;" }, this._tempoSlider.container, this._tempoStepper)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("rhythm") }, "Rhythm:"), div({ class: "selectContainer" }, this._rhythmSelect)), div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("beatsPerBar") }, "Meter:"), div({ class: "selectContainer" }, this._meterSelect))));
             this._instrumentSettingsArea = div({ class: "instrument-settings-area" }, this._instrumentSettingsGroup);
             this._settingsArea = div({ class: "settings-area noSelection" }, div({ class: "version-area" }, div({ style: `text-align: center; margin: 3px 0; color: ${ColorConfig.secondaryText};` }, EditorConfig.versionDisplayName, " ", a({ class: "tip", target: "_blank", href: EditorConfig.releaseNotesURL }, EditorConfig.version))), div({ class: "play-pause-area" }, div({ class: "playback-bar-controls" }, this._playButton, this._pauseButton, this._recordButton, this._stopButton, this._prevBarButton, this._nextBarButton), div({ class: "playback-volume-controls" }, span({ class: "volume-speaker" }), this._volumeSlider.container)), this._menuArea, this._songSettingsArea, this._instrumentSettingsArea);
             this.mainLayer = div({ class: "beepboxEditor", tabIndex: "0" }, this._patternArea, this._trackArea, this._settingsArea, this._promptContainer);
@@ -23082,6 +23159,24 @@ You should be redirected to the song at:<br /><br />
                 this._tempoSlider.updateValue(Math.max(0, Math.min(28, Math.round(4.0 + 9.0 * Math.log2(this.doc.song.tempo / 120.0)))));
                 this._tempoStepper.value = this.doc.song.tempo.toString();
                 setSelectedValue(this._rhythmSelect, this.doc.song.rhythm);
+                {
+                    // CarrotBox: the meter list, with the song's own time signature when it is not a preset
+                    const sig = carrotTimeSig(this.doc.song), name = carrotTimeSigName(this.doc.song);
+                    const groupsOf = (p) => p.groups.join("+");
+                    const presets = FLConfig.timeSigPresets;
+                    let index = presets.findIndex(p => p.num == sig.num && p.den == sig.den && (groupsOf(p) == sig.groups.join("+") || sig.groups.length == 0));
+                    const key = name + "|" + index;
+                    if (this._meterKey != key) {
+                        this._meterKey = key;
+                        this._meterSelect.innerHTML = "";
+                        presets.forEach((p, i) => this._meterSelect.appendChild(option({ value: String(i) }, p.name + (p.groups.length ? " (" + groupsOf(p) + ")" : ""))));
+                        if (index < 0)
+                            this._meterSelect.appendChild(option({ value: "current" }, name));
+                        this._meterSelect.appendChild(option({ value: "custom" }, "Custom..."));
+                    }
+                    this._meterSelect.value = index < 0 ? "current" : String(index);
+                    this._tempoStepper.title = sig.den == 4 ? "Beats (quarter notes) per minute" : "Beats (1/" + sig.den + " notes) per minute = " + (Math.round(carrotQuarterBpm(this.doc.song) * 10) / 10) + " quarter notes per minute";
+                }
                 if (this.doc.song.getChannelIsNoise(this.doc.channel)) {
                     this._pitchedPresetSelect.style.display = "none";
                     this._drumPresetSelect.style.display = "";
@@ -24324,6 +24419,27 @@ You should be redirected to the song at:<br /><br />
             this._scaleSelect.addEventListener("change", this._whenSetScale);
             this._keySelect.addEventListener("change", this._whenSetKey);
             this._rhythmSelect.addEventListener("change", this._whenSetRhythm);
+            this._meterSelect.addEventListener("change", () => {
+                const v = this._meterSelect.value;
+                if (v == "current")
+                    return;
+                if (v == "custom") {
+                    const sig = carrotTimeSig(this.doc.song);
+                    CarrotUI.ask({ title: "Time signature", label: "Beats per bar / the note one beat is (2, 4, 8 or 16), then an optional grouping of the beats.", value: sig.num + "/" + sig.den + (sig.groups.length ? " " + sig.groups.join("+") : ""), hint: "Examples: 7/8 2+2+3, 5/4 3+2, 11/8 3+3+3+2, 9/16" }).then((text) => {
+                        const m = text && /^\s*(\d+)\s*\/\s*(\d+)\s*(.*)$/.exec(text);
+                        if (m) {
+                            const groups = m[3].trim() ? carrotValidGroups(m[3], +m[1]) : [];
+                            this.doc.record(new ChangeTimeSignature(this.doc, +m[1], +m[2], groups || []));
+                        }
+                        this._meterKey = null;
+                        this.whenUpdated();
+                    });
+                    return;
+                }
+                const p = FLConfig.timeSigPresets[+v];
+                if (p)
+                    this.doc.record(new ChangeTimeSignature(this.doc, p.num, p.den, p.groups));
+            });
             this._pitchedPresetSelect.addEventListener("change", this._whenSetPitchedPreset);
             this._drumPresetSelect.addEventListener("change", this._whenSetDrumPreset);
             this._algorithmSelect.addEventListener("change", this._whenSetAlgorithm);

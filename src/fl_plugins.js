@@ -43,7 +43,7 @@
             blurb: "Makes a lead, bass or any part bouncy: staccato, swing, octave hops, accents, pitch scoops, bouncing-ball echoes, chops, pushes and an optional sidechain pump. Eight styles, one undo step.",
         },
         {
-            id: "audiomidi", name: "AudioMidi", kind: "tool", file: "plugins/audiomidi.js", icon: "AM", color: "#00c8ff", sizeKB: 198,
+            id: "audiomidi", name: "AudioMidi", kind: "tool", file: "plugins/audiomidi.js", icon: "AM", color: "#00c8ff", sizeKB: 200,
             blurb: "Turns a WAV, MP3, OGG or FLAC into a song: finds the tempo (even when it drifts), beat, meter and key, hears every drum hit and matches it to the closest CarrotBox drum, and writes the bass, lead and chords as notes with velocity, glides and bends (the original stays muted on its own channel for A/B).",
         },
         {
@@ -55,7 +55,7 @@
             blurb: "Draw the movement: 11 shapers (Time, Pitch, Filter, Liquid, Drive, Crush, Noise, Volume, Pan, Width and Reverb), each with its own curve that loops with the song or restarts on every hit, with swing, smoothing and low/mid/high band processing. 24 presets, from sidechain pumps and trance gates to tape stops and dub throws.",
         },
         {
-            id: "spstation", name: "SP Station", kind: "instrument", file: "plugins/spstation.js", alt: "SP-404MKII", icon: "SP", color: "#e34234", sizeKB: 176,
+            id: "spstation", name: "SP Station", kind: "instrument", file: "plugins/spstation.js", alt: "SP-404MKII", icon: "SP", color: "#e34234", sizeKB: 177,
             blurb: "The plugin for the Roland SP-404MKII (works while one is connected): a working copy of its panel with 160 pads in 10 banks, sample modes and editing, sampling, resampling and skip-back, 4 buses with 44 effects, the pattern sequencer with TR-REC, DJ mode, every SHIFT + pad function and projects. Mirrors the device's pads, banks, knobs and patterns over USB MIDI, and patterns can be written into the song.",
         },
         {

@@ -1788,10 +1788,12 @@
             for (const e of pat.ev) {
                 const pitch = padToNote(p, e[1], e[2], isDrum);
                 if (pitch == null) { skipped++; continue; }
-                const b = Math.floor(e[0] / barParts);
+                // (SP patterns count 24 steps per beat; the song counts Config.partsPerBeat)
+                const k = Config.partsPerBeat / 24, at = Math.round(e[0] * k);
+                const b = Math.floor(at / barParts);
                 if (b >= pat.len) continue;
-                const s0 = e[0] - b * barParts;
-                bars[b].push({ start: s0, end: Math.min(barParts, s0 + Math.max(1, e[4] || 6)), pitches: [pitch], size: clamp(Math.round(e[3] / 127 * Config.noteSizeMax), 1, Config.noteSizeMax) });
+                const s0 = at - b * barParts;
+                bars[b].push({ start: s0, end: Math.min(barParts, s0 + Math.max(1, Math.round((e[4] || 6) * k))), pitches: [pitch], size: clamp(Math.round(e[3] / 127 * Config.noteSizeMax), 1, Config.noteSizeMax) });
             }
             A.carrotWriteNotes(doc, bars, { channel: ch, startBar: doc.bar, overlap: true });
             say("WROTE " + key + " AT BAR " + (doc.bar + 1) + (skipped ? " (" + skipped + " SKIPPED)" : ""), 2000);
@@ -1808,7 +1810,8 @@
                     const where = noteToPad(p, pitch, isDrum);
                     if (!where) continue;
                     const { bank, label } = parseKey(where.key);
-                    ev.push([b * barParts + n.start, bank, label, Math.round(n.pins[0].size / Config.noteSizeMax * 127), n.end - n.start]);
+                    const k = 24 / Config.partsPerBeat;
+                    ev.push([Math.round((b * barParts + n.start) * k), bank, label, Math.round(n.pins[0].size / Config.noteSizeMax * 127), Math.max(1, Math.round((n.end - n.start) * k))]);
                 }
             }
             p.pat[key] = { len, ev: ev.sort((a, b) => a[0] - b[0]) };

@@ -3112,16 +3112,19 @@
 	}
 	function quantizer(mode) {
 		// mode: 0 smart, 1 exact, 2 sixteenths, 3 thirty-seconds, 4 sixteenth triplets
+		// (in parts: a sixteenth is partsPerBeat / 4, a sixteenth triplet partsPerBeat / 6)
+		const ppb = Config.partsPerBeat, s16 = ppb / 4, s32 = ppb / 8, t16 = ppb / 6, k = ppb / 24;
 		return (x) => {
 			switch (mode) {
 				case 1: return Math.round(x);
-				case 2: return Math.round(x / 6) * 6;
-				case 3: return Math.round(x / 3) * 3;
-				case 4: return Math.round(x / 4) * 4;
+				case 2: return Math.round(x / s16) * s16;
+				case 3: return Math.round(x / s32) * s32;
+				case 4: return Math.round(x / t16) * t16;
+				case 5: return Math.round(x / (ppb / 16)) * (ppb / 16);
 			}
-			const q16 = Math.round(x / 6) * 6, q12 = Math.round(x / 4) * 4;
-			if (Math.abs(x - q16) <= 1.6) return q16;
-			if (Math.abs(x - q12) <= 1.1) return q12;
+			const q16 = Math.round(x / s16) * s16, q12 = Math.round(x / t16) * t16;
+			if (Math.abs(x - q16) <= 1.6 * k) return q16;
+			if (Math.abs(x - q12) <= 1.1 * k) return q12;
 			return Math.round(x);
 		};
 	}
@@ -3330,7 +3333,7 @@
 				for (const d of allDrums) {
 					if (rows[d.kind] == undefined) continue;
 					const start = quantize(toParts(d.t));
-					notes.push({ start, end: start + 6, pitches: [rows[d.kind]], size: sizeOf(d.vel) });
+					notes.push({ start, end: start + Config.partsPerBeat / 4, pitches: [rows[d.kind]], size: sizeOf(d.vel) });
 				}
 				A.carrotWriteNotes(doc, toBars(notes, bars, barParts), { channel, startBar: 0, replace: true, freshPatterns: true, overlap: true });
 				written.push("drums (" + notes.length + " hits)");
@@ -3444,7 +3447,7 @@
 					fpc.kitName = "Beatbox kit";
 				}));
 				for (const pad of doc.song.channels[channel].instruments[0].fl.fpc.pads) if (pad.sampleId) A.FLSampleBank.request(pad.sampleId);
-				const notes = r.drums.filter(d => rows[d.kind] != undefined).map(d => { const start = toParts(d.t); return { start, end: start + 6, pitches: [rows[d.kind]], size: sizeOf(d.vel) }; });
+				const notes = r.drums.filter(d => rows[d.kind] != undefined).map(d => { const start = toParts(d.t); return { start, end: start + Config.partsPerBeat / 4, pitches: [rows[d.kind]], size: sizeOf(d.vel) }; });
 				A.carrotWriteNotes(doc, toBars(notes, bars, barParts), { channel, startBar, replace: true, freshPatterns: true, overlap: true });
 				written.push(notes.length + " drum hits");
 			}
@@ -3488,7 +3491,7 @@
 		const instBox = HTML.div({ class: "cb-am-insts" });
 		const instSection = CarrotUI.section("Instruments heard (rebuilt, editable)", instBox);
 		instSection.style.display = "none";
-		const quantizeSelect = CarrotUI.select({ label: "Timing", options: ["Smart (snap close notes to the grid)", "Exact (as played)", "1/16 grid", "1/32 grid", "1/16 triplets"], value: params.quantize, onChange: (v) => { params.quantize = v; } });
+		const quantizeSelect = CarrotUI.select({ label: "Timing", options: ["Smart (snap close notes to the grid)", "Exact (as played)", "1/16 grid", "1/32 grid", "1/16 triplets", "1/64 grid"], value: params.quantize, onChange: (v) => { params.quantize = v; } });
 		const toggles = [["drums", "Drums"], ["bass", "Bass"], ["lead", "Lead"], ["chords", "Harmony"], ["original", "Original (muted)"]].map(([key, label]) =>
 			CarrotUI.toggle({ label, value: params.parts[key] !== false, onChange: (v) => { params.parts[key] = v; } }));
 		const bendToggle = CarrotUI.toggle({ label: "Pitch bends", value: params.bends !== false, title: "Write glides (808 slides, vocal scoops) as note bends", onChange: (v) => { params.bends = v; } });

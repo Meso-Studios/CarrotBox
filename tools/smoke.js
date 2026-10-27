@@ -313,7 +313,7 @@ function check(label, ok, detail) {
 		const song = editor.doc.song;
 		const result = { runs: 0, empty: [], overlaps: 0, bad: 0 };
 		const parts = ["lead", "hook", "counter", "bass", "arp", "chords", "drums", "perc"];
-		const barLength = song.beatsPerBar * 24;
+		const barLength = song.beatsPerBar * beepbox.Config.partsPerBeat;
 		for (const style of Object.keys(CARROT_GEN_STYLES))
 			for (const part of parts) {
 				const channel = part == "drums" || part == "perc" ? song.pitchChannelCount : 0;
@@ -537,6 +537,26 @@ function check(label, ok, detail) {
 	check("Utawa voice to notes hears a hummed melody and a beatbox", voice.right >= voice.of - 1 && voice.notes <= voice.of + 1 && voice.typed >= voice.ofHits - 2 && voice.hits <= voice.ofHits + 2, JSON.stringify(voice));
 	check("sampler, slicex and fpc sound on every key", Object.keys(keys).length == 0, JSON.stringify(keys));
 
+	// ---- 48 parts per beat: an old (24 parts per beat, version 10) song opens with every note in place
+	const timing = await page.evaluate(({ url, notes }) => {
+		const song = new beepbox.Song(url), got = [];
+		for (let c = 0; c < song.getChannelCount(); c++) for (let b = 0; b < song.barCount; b++) { const pt = song.getPattern(c, b); if (pt) for (const n of pt.notes) got.push([c, b, n.start / 2, n.end / 2, n.pitches.join("."), n.pins.map(q => (q.time / 2) + ":" + q.interval + ":" + q.size).join(",")].join("/")); }
+		const same = notes.every((n, i) => got[i] == n);
+		// 64th notes and odd meters round-trip through the URL and JSON
+		const A = beepbox.CarrotAPI, doc = editor.doc, out = { same, rhythms: beepbox.Config.rhythms.map(r => r.name).filter(n => /32nd|64th/.test(n)).length, meters: [] };
+		for (const [num, den, groups] of [[7, 8, [2, 2, 3]], [5, 4, [3, 2]], [15, 16, [3, 3, 3, 3, 3]]]) {
+			A.carrotSetTimeSig(doc, num, den, groups);
+			const s = doc.song, ppb = beepbox.Config.partsPerBeat, pat = s.channels[0].patterns[0];
+			pat.notes.length = 0;
+			for (let i = 0; i < 8; i++) pat.notes.push(new beepbox.Note(24 + i, i * ppb / 16, (i + 1) * ppb / 16, 3, false));
+			s.channels[0].bars[0] = 1;
+			const key = (x) => JSON.stringify(A.carrotTimeSig(x)) + x.getPattern(0, 0).notes.slice(0, 8).map(n => n.start + "-" + n.end).join(" ");
+			const gen = A.CarrotIdeaGen.generate({ song: s, channel: s.pitchChannelCount, startBar: 0, bars: 2, part: "drums", style: "pop", seed: 3 });
+			out.meters.push(key(new beepbox.Song(s.toBase64String())) == key(s) && key(new beepbox.Song(JSON.stringify(s.toJsonObject()))) == key(s) && gen.bars.flat().every(n => n.start >= 0 && n.end <= s.beatsPerBar * ppb));
+		}
+		return out;
+	}, {"url": "an31s0k0l00e03t2ma7g0fj07r1i0o432T6v1ub8f0q0x10p71d23W7E2b925T1v1u62f0qwx10s811d08A0F0B0Q00adPfe39E4b761862863bT1v1ub6f10p7q011d23A5F4BbQ0001Peec8E362363479T2v1u15f10w4qw02d03w0E0b8Q400000000zgg00000002d1000000008Q400000000p28HNPtfGxksDjRlmpYxIGGPa21pllC8ZPaGwZ4OV6ihMahrdTrSx6ANp98J8zihQyeEhQyeHQWBAYZJXuQ8-kKp4v62eMhQyeDQVJBYFXKTJ2fCeo4v62eIhQye_SjkYevjhZsjTgzUDyK1cJ9EQXdkzN8uyqD49aq4At6NIruPIr6NIrfFJdzoSdzrStzoSdzpZdxIr6NIqbIX6NIr6PWqCSdzoSd4StzoSdzp3XAQpMNFB0Ml8F6Olwj7J1twaPaleji5UENYi5S0KQoZAbIr9mENXgno2XhzSgJ9l4Fl6ilUCz8E_7UAoYE5Se8UENYjIshAsko-9Se8UANXeko-9Se8oB9DCz7PfcsNAsko-9Se8Oeacv4X74silGcv51tzyfOea6fymNN6hNhzUDoUwbNhzUDye8UANXeko-9Se8VCuqcvcYNP6hNhzUDoUwbNhzUDye8UANXeko-9Se8VCvOuq6fCgnyeoUENYjIshAsko-9Se8UANXeko-9Se8Ouacv5r74kBsDyz7NeNN0nyz7Nf4shN9zSsENYjIshPcw", "notes": ["0/0/0/96/43.48.52/0:0:3,96:0:3", "0/0/96/192/43.48.52/0:0:2,96:0:2", "0/1/0/96/43.47.50/0:0:3,96:0:3", "0/1/96/192/43.47.50/0:0:2,96:0:2", "0/2/0/96/40.45.48/0:0:3,96:0:3", "0/2/96/192/40.45.48/0:0:2,96:0:2", "0/3/0/96/41.45.48/0:0:3,96:0:3", "0/3/96/192/41.45.48/0:0:2,96:0:2", "1/0/0/6/45/0:0:3,6:0:3", "1/0/6/18/48/0:0:2,12:0:2", "1/0/18/24/43/0:0:2,6:0:2", "1/0/24/30/50/0:0:3,6:0:3", "1/0/30/42/45/0:0:2,12:0:2", "1/0/42/48/43/0:0:2,6:0:2", "1/0/60/90/40/0:0:2,30:0:2", "1/0/90/96/43/0:0:2,6:0:2", "1/0/108/120/48/0:0:2,12:0:2", "1/0/132/144/50/0:0:2,12:0:2", "1/0/156/168/48/0:0:2,12:0:2", "1/0/180/192/50/0:0:2,12:0:2", "1/1/0/6/40/0:0:3,6:0:3", "1/1/6/18/43/0:0:2,12:0:2", "1/1/18/24/38/0:0:2,6:0:2", "1/1/24/30/45/0:0:3,6:0:3", "1/1/30/42/40/0:0:2,12:0:2", "1/1/42/48/38/0:0:2,6:0:2", "1/1/60/90/38/0:0:2,30:0:2", "1/1/90/96/38/0:0:2,6:0:2", "1/1/108/120/50/0:0:2,12:0:2", "1/1/132/144/45/0:0:2,12:0:2", "1/1/156/168/50/0:0:2,12:0:2", "1/1/180/192/52/0:0:2,12:0:2", "1/2/0/18/52/0:0:3,18:0:3", "1/2/18/24/55/0:0:2,6:0:2", "1/2/24/36/50/0:0:3,12:0:3", "1/2/36/48/55/0:0:2,12:0:2", "1/2/48/54/52/0:0:3,6:0:3", "1/2/66/72/55/0:0:2,6:0:2", "1/2/72/84/50/0:0:3,12:0:3", "1/2/84/96/57/0:0:2,12:0:2"]});
+	check("old songs keep their notes at 48 parts per beat; 32nd/64th rhythms; 7/8, 5/4 and 15/16 round-trip", timing.same && timing.rhythms >= 3 && timing.meters.every(Boolean), JSON.stringify(timing));
 	check("no errors in the console", errors.length == 0, errors.slice(0, 5).join(" | "));
 	await browser.close();
 	server.close();

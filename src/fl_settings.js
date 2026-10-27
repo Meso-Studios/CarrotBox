@@ -708,6 +708,11 @@
             this.masterGross = new GrossBeatSettings();
             this.masterInserts = [];
             this.swing = 0;
+            // Time signature: the numerator is song.beatsPerBar (BeepBox's own setting, one beat =
+            // one 1/timeSigDen note, and song.tempo counts those beats). beatGroups is the beat
+            // grouping (e.g. [2, 2, 3] for 7/8), empty for none. See carrotTimeSig().
+            this.timeSigDen = 4;
+            this.beatGroups = [];
         }
         reset() {
             this.masterFx = 0;
@@ -716,6 +721,8 @@
             this.masterGross.reset();
             this.masterInserts = [];
             this.swing = 0;
+            this.timeSigDen = 4;
+            this.beatGroups = [];
         }
     }
     // Songs as JSON-able objects for the "Z" tag. Channel and pattern names
@@ -749,6 +756,10 @@
         }
         if (anyPatternNames)
             o["pn"] = patternNames;
+        if (fl.timeSigDen != 4)
+            o["tsd"] = fl.timeSigDen;
+        if (fl.beatGroups.length > 0)
+            o["tsg"] = fl.beatGroups.slice();
         return o;
     }
     function flSongFromJsonObject(song, o) {
@@ -778,6 +789,159 @@
                 }
             }
         }
+        if (o["tsd"] != undefined)
+            fl.timeSigDen = carrotValidDenominator(o["tsd"]);
+        fl.beatGroups = carrotValidGroups(o["tsg"], 0) || [];
+    }
+    // ---------------------------------------------------------- time signature
+    // A time signature is BeepBox's beats per bar (the numerator; one beat is a 1/den note and the
+    // tempo counts these beats) plus a denominator and an optional beat grouping kept in song.fl.
+    // Songs without that data are x/4 with no grouping, which is exactly how BeepBox treats them.
+    FLConfig.timeSigDenominators = [2, 4, 8, 16];
+    FLConfig.timeSigPresets = [
+        { name: "2/4", num: 2, den: 4, groups: [] },
+        { name: "3/4", num: 3, den: 4, groups: [] },
+        { name: "4/4", num: 4, den: 4, groups: [] },
+        { name: "5/4", num: 5, den: 4, groups: [3, 2] },
+        { name: "6/8", num: 6, den: 8, groups: [3, 3] },
+        { name: "7/8", num: 7, den: 8, groups: [2, 2, 3] },
+        { name: "7/4", num: 7, den: 4, groups: [4, 3] },
+        { name: "9/8", num: 9, den: 8, groups: [3, 3, 3] },
+        { name: "11/8", num: 11, den: 8, groups: [3, 3, 3, 2] },
+        { name: "12/8", num: 12, den: 8, groups: [3, 3, 3, 3] },
+        { name: "13/8", num: 13, den: 8, groups: [3, 3, 3, 2, 2] },
+        { name: "15/16", num: 15, den: 16, groups: [3, 3, 3, 3, 3] },
+        { name: "5/8", num: 5, den: 8, groups: [3, 2] },
+    ];
+    function carrotValidDenominator(den) {
+        den = +den;
+        if (!(den > 0))
+            return 4;
+        let best = 4;
+        for (const d of FLConfig.timeSigDenominators)
+            if (Math.abs(Math.log2(d) - Math.log2(den)) < Math.abs(Math.log2(best) - Math.log2(den)))
+                best = d;
+        return best;
+    }
+    // A beat grouping: positive whole numbers that add up to `num` (any total when num is 0).
+    // Returns a clean array, [] for "no grouping" (a single group), or null when invalid.
+    function carrotValidGroups(groups, num) {
+        if (typeof groups == "string")
+            groups = carrotParseGroups(groups);
+        if (!Array.isArray(groups) || groups.length == 0)
+            return null;
+        const clean = [];
+        let sum = 0;
+        for (const g of groups) {
+            const n = Math.round(+g);
+            if (!(n >= 1 && n <= Config.beatsPerBarMax))
+                return null;
+            clean.push(n);
+            sum += n;
+        }
+        if (sum > Config.beatsPerBarMax || (num > 0 && sum != num))
+            return null;
+        return clean.length > 1 ? clean : [];
+    }
+    // "2+2+3", "2 2 3" or "2,2,3" -> [2, 2, 3]; null when it can't be read.
+    function carrotParseGroups(text) {
+        const items = String(text == null ? "" : text).trim().split(/[\s+,]+/).filter(x => x != "");
+        if (items.length == 0 || items.some(x => !/^\d+$/.test(x)))
+            return null;
+        return items.map(x => parseInt(x, 10));
+    }
+    function carrotFormatGroups(groups) {
+        return groups && groups.length > 0 ? groups.join("+") : "";
+    }
+    // A sensible grouping when none was chosen: up to four beats are one group, x/8 and x/16
+    // meters divisible by three are compound (3+3...), 8/4, 12/4 and 16/4 are groups of four, and
+    // everything else is threes then twos (5 = 3+2, 7 = 3+2+2, 11 = 3+3+3+2, 13 = 3+3+3+2+2).
+    function carrotDefaultGroups(num, den) {
+        num = Math.max(1, num | 0);
+        if (num <= 4)
+            return [num];
+        if (den >= 8 && num % 3 == 0)
+            return new Array(num / 3).fill(3);
+        if (den <= 4 && num % 4 == 0)
+            return new Array(num / 4).fill(4);
+        let threes = Math.floor(num / 3);
+        while (threes > 0 && (num - threes * 3) % 2 != 0)
+            threes--;
+        const groups = new Array(threes).fill(3);
+        for (let rest = num - threes * 3; rest > 0; rest -= 2)
+            groups.push(2);
+        return groups;
+    }
+    // The song's time signature: { num, den, groups } where groups is the chosen grouping
+    // ([] when none, or when it no longer adds up to the beats per bar).
+    function carrotTimeSig(song) {
+        const num = song.beatsPerBar;
+        const den = song.fl ? song.fl.timeSigDen : 4;
+        const groups = (song.fl && carrotValidGroups(song.fl.beatGroups, num)) || [];
+        return { num, den, groups };
+    }
+    // The grouping generators and tools should follow: the chosen one, or carrotDefaultGroups().
+    function carrotBeatGroups(song) {
+        const sig = carrotTimeSig(song);
+        return sig.groups.length > 0 ? sig.groups : carrotDefaultGroups(sig.num, sig.den);
+    }
+    // The beats (0-based) where a group starts, for grid lines and the metronome: the chosen
+    // grouping, or for x/8 and x/16 meters the default one. None for x/4 songs without a grouping.
+    function carrotGroupStarts(song) {
+        const sig = carrotTimeSig(song);
+        const groups = sig.groups.length > 0 ? sig.groups : sig.den >= 8 ? carrotDefaultGroups(sig.num, sig.den) : [];
+        const starts = [];
+        let beat = 0;
+        for (const g of groups) {
+            if (beat > 0 && beat < sig.num)
+                starts.push(beat);
+            beat += g;
+        }
+        return starts;
+    }
+    // Metronome accent of a beat: 2 = first beat of the bar, 1 = first beat of a group, 0 = other.
+    // Without a grouping, x/4 songs keep BeepBox's middle-of-the-bar accent.
+    function carrotMetronomeAccent(song, beat) {
+        if (beat == 0)
+            return 2;
+        const starts = carrotGroupStarts(song);
+        if (starts.length > 0)
+            return starts.indexOf(beat) != -1 ? 1 : 0;
+        return (song.beatsPerBar > 4 && song.beatsPerBar % 2 == 0 && beat == song.beatsPerBar / 2) ? 1 : 0;
+    }
+    // Tempo: song.tempo counts beats (1/den notes) per minute. MIDI files, MIDI clock and the
+    // "quarter note" display use quarter notes.
+    function carrotQuarterBpm(song) {
+        return song.tempo * 4 / carrotTimeSig(song).den;
+    }
+    // A MIDI time signature (numerator, power-of-two denominator exponent) as { num, den } within
+    // what CarrotBox supports (den 2 to 16, num up to Config.beatsPerBarMax), keeping the bar length
+    // where it can.
+    function carrotTimeSigFromMidi(numerator, denominatorExponent) {
+        let num = Math.max(1, numerator | 0);
+        let den = Math.pow(2, Math.max(0, Math.min(6, denominatorExponent | 0)));
+        while (den < 2) {
+            num *= 2;
+            den *= 2;
+        }
+        while (den > 16 && num % 2 == 0) {
+            num /= 2;
+            den /= 2;
+        }
+        while (num > Config.beatsPerBarMax && num % 2 == 0 && den > 2) {
+            num /= 2;
+            den /= 2;
+        }
+        if (den > 16) {
+            num = Math.max(1, Math.round(num * 16 / den));
+            den = 16;
+        }
+        num = Math.max(Config.beatsPerBarMin, Math.min(Config.beatsPerBarMax, num));
+        return { num, den };
+    }
+    function carrotTimeSigName(song) {
+        const sig = carrotTimeSig(song);
+        return sig.num + "/" + sig.den + (sig.groups.length > 0 ? " (" + carrotFormatGroups(sig.groups) + ")" : "");
     }
     function flSortNotes(notes) {
         let sorted = true;
