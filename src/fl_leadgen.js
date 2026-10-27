@@ -1188,6 +1188,44 @@
         // Which rows of a drum channel play which sound. Uses the FPC pad names
         // when there are any, otherwise the CarrotBox kit order (or pitch order
         // for BeepBox's own noise drums).
+        // Drums in any meter, from its beat grouping (7/8 = 2+2+3): a kick opens every group, the
+        // backbeat lands on the last group (and the middle one in long bars), hats ride the beats.
+        static groupedDrums(ctx, roles) {
+            const { o, rng, song } = ctx;
+            const sig = carrotTimeSig(song), groups = carrotBeatGroups(song);
+            const beatParts = Config.partsPerBeat, barParts = song.beatsPerBar * beatParts;
+            const sub = sig.den >= 16 ? 1 : sig.den >= 8 ? 2 : 4; // steps per beat
+            const stepP = beatParts / sub;
+            const row = (role) => roles[role].length > 0 ? roles[role][0] : null;
+            const bars = [];
+            for (let b = 0; b < o.bars; b++) {
+                const notes = [], seen = new Set();
+                const add = (role, at, len, size) => {
+                    const r = row(role);
+                    if (r == null || at < 0 || at >= barParts || seen.has(r + ":" + at)) return;
+                    seen.add(r + ":" + at);
+                    notes.push({ start: at, end: Math.min(barParts, at + Math.max(1, len)), pitches: [r], size });
+                };
+                let beat = 0;
+                groups.forEach((g, gi) => {
+                    const at = beat * beatParts;
+                    if (gi == 0 || rng() < 0.35 + 0.4 * o.density) add("kick", at, stepP * 2, gi == 0 ? 3 : 2);
+                    const back = gi == groups.length - 1 || (groups.length >= 4 && gi == Math.floor(groups.length / 2));
+                    if (back && gi > 0) add(rng() < 0.5 && roles.clap.length ? "clap" : "snare", at, stepP * 2, 3);
+                    // a ghost or a push into the next group
+                    if (g >= 3 && rng() < o.complexity * 0.5) add("kick", at + (g - 1) * beatParts, stepP, 2);
+                    if (gi == groups.length - 1 && b % 4 == 3 && o.complexity > 0.4) add("snare", at + (g - 1) * beatParts + beatParts / 2, stepP, 1);
+                    beat += g;
+                });
+                for (let s = 0; s < song.beatsPerBar * sub; s++) {
+                    const at = s * stepP, onBeat = s % sub == 0;
+                    if (onBeat || rng() < o.density * 0.7) add("hat", at, stepP, onBeat ? (at % (beatParts * 2) == 0 ? 3 : 2) : 1);
+                }
+                if (b % 2 == 1 && rng() < 0.5) add("open", (song.beatsPerBar - 1) * beatParts + (sub > 1 ? beatParts / 2 : 0), stepP * 2, 2);
+                bars.push(notes);
+            }
+            return { bars, description: "Drums in " + sig.num + "/" + sig.den + " (" + groups.join("+") + ")" };
+        }
         static kitRoles(song, channel) {
             const roles = { kick: [], snare: [], clap: [], hat: [], open: [], perc: [], crash: [], ride: [], tom: [], shaker: [], rim: [] };
             const channelData = song.channels[channel];
@@ -1228,6 +1266,9 @@
         static drums(ctx) {
             const { o, rng, style, barSteps, stepParts } = ctx;
             const roles = CarrotIdeaGen.kitRoles(ctx.song, o.channel != null ? o.channel : ctx.song.pitchChannelCount);
+            const sig = carrotTimeSig(ctx.song);
+            if (!(sig.den == 4 && sig.num <= 4 && sig.groups.length == 0))
+                return CarrotIdeaGen.groupedDrums(ctx, roles);
             const row = (role, i = 0) => roles[role].length > 0 ? roles[role][i % roles[role].length] : null;
             const grooves = style.drums;
             const grooveA = grooves[Math.floor(rng() * grooves.length) % grooves.length];
