@@ -883,7 +883,7 @@
                 partIndex == 1 ? host.toggle(base + "on", { label: "Part B on", def: false, title: "Layer a second full synth (new notes)" }) : HTML.div({ class: "cb-ov-status" }, "Part A always plays."),
                 CarrotUI.row(k("level", { label: "Level", min: 0, max: 1.5, def: 0.8, format: pct }), k("vel", { label: "Velocity", min: 0, max: 1, def: 0.5, format: pct })),
                 CarrotUI.row(k("pitch.semi", { label: "Semi", min: -24, max: 24, step: 1, def: 0 }), k("pitch.fine", { label: "Fine", min: -100, max: 100, step: 1, def: 0, unit: "c" }), k("pitch.glide", { label: "Glide", min: 0, max: 1, def: 0, unit: "s" })),
-                CarrotUI.row(k("pitch.vib", { label: "Vibrato", min: 0, max: 1, def: 0, unit: "st" }), k("pitch.vibRate", { label: "Vib rate", min: 0.5, max: 12, def: 5.2, unit: "Hz" }), k("pitch.vibDelay", { label: "Vib delay", min: 0, max: 2, def: 0.25, unit: "s" })),
+                CarrotUI.row(k("pitch.vib", { label: "Vibrato", min: 0, max: 1, def: 0, unit: "st" }), k("pitch.vibRate", { label: "Vib rate", min: 0.5, max: 12, def: 5.2, format: v => (v < 10 ? v.toFixed(2) : v.toFixed(1)) + " Hz" }), k("pitch.vibDelay", { label: "Vib delay", min: 0, max: 2, def: 0.25, unit: "s" })),
                 CarrotUI.button("Copy to other part", () => {
                     const p = P();
                     const copy = clone(p.parts[partIndex]);
@@ -906,7 +906,7 @@
             const blur = CarrotUI.section("Blur",
                 CarrotUI.row(k("blur.amt", { label: "Amount", min: 0, max: 1, def: 0, format: pct, title: "Smears every harmonic over time: soft attacks and spectral tails" }), k("blur.time", { label: "Time", min: 0.01, max: 2, curve: "exp", def: 0.25, unit: "s" }), k("blur.tilt", { label: "Tilt", min: 0, max: 1, def: 0.5, format: pct })));
             const trem = CarrotUI.section("Tremolo",
-                CarrotUI.row(k("trem.depth", { label: "Depth", min: 0, max: 1, def: 0, format: pct }), k("trem.rate", { label: "Rate", min: 0.05, max: 20, curve: "exp", def: 4, unit: "Hz" }), k("trem.spread", { label: "Harm spread", min: 0, max: 1, def: 0.3, format: pct, title: "0 = plain tremolo; higher = every harmonic moves on its own (shimmer)" })));
+                CarrotUI.row(k("trem.depth", { label: "Depth", min: 0, max: 1, def: 0, format: pct }), k("trem.rate", { label: "Rate", min: 0.05, max: 20, curve: "exp", def: 4, format: v => (v < 10 ? v.toFixed(2) : v.toFixed(1)) + " Hz" }), k("trem.spread", { label: "Harm spread", min: 0, max: 1, def: 0.3, format: pct, title: "0 = plain tremolo; higher = every harmonic moves on its own (shimmer)" })));
             const filt = (n) => CarrotUI.section("Filter " + n,
                 CarrotUI.row(s("f" + n + ".type", { label: "Type", options: FILTERS, def: n == 1 ? 1 : 0 }), k("f" + n + ".cutoff", { label: "Cutoff", min: 20, max: 20000, curve: "exp", unit: "Hz", def: n == 1 ? 9000 : 1500 })),
                 CarrotUI.row(k("f" + n + ".res", { label: "Resonance", min: 0, max: 1, def: n == 1 ? 0.15 : 0.3, format: pct }), k("f" + n + ".key", { label: "Key track", min: 0, max: 1, def: n == 1 ? 0.3 : 0, format: pct }), k("f" + n + ".mix", { label: "Mix", min: 0, max: 1, def: 1, format: pct })));
@@ -1030,7 +1030,7 @@
                     host.toggle(mb + "lfo.on", { label: "LFO", def: false }),
                     host.knob(mb + "lfo.amt", { label: "LFO amount", min: target == M_VOL ? 0 : -1, max: 1, def: 0.2, small: true, format: amtFormat }),
                     host.select(mb + "lfo.shape", { label: "Shape", options: LFO_SHAPES, def: 0 }),
-                    host.knob(mb + "lfo.rate", { label: "Rate", min: 0.02, max: 30, curve: "exp", unit: "Hz", def: 3, small: true }),
+                    host.knob(mb + "lfo.rate", { label: "Rate", min: 0.02, max: 30, curve: "exp", format: v => (v < 10 ? v.toFixed(2) : v.toFixed(1)) + " Hz", def: 3, small: true }),
                     host.toggle(mb + "lfo.sync", { label: "Sync", def: false }),
                     host.select(mb + "lfo.div", { label: "Sync rate", options: carrotSyncOptions(), def: 9 }),
                     CarrotUI.button("Reset", () => { pp().mods[target] = modSlot(target); host.changed(true); host.refresh(); paint(); }, { title: "Put this target's envelope and LFO back to default (off)" }));

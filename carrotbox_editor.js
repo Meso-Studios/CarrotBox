@@ -20277,6 +20277,10 @@ FLKitLibrary._loadPromise = null;
             blurb: "Additive and resynthesis synth: every note is a stack of harmonics shaped by two timbres (or a resynthesized sample), harmonizer, prism, spectral filters, phaser, pluck, blur and tremolo, with a graph editor of envelopes and LFOs for every target, unison and two layered parts.",
         },
         {
+            id: "nebula", name: "Nebula", kind: "instrument", file: "plugins/nebula.js", alt: "Portal / Granulator", icon: "Nb", color: "#9d7bff", sizeKB: 36,
+            blurb: "Granular synth: every note sprays a cloud of tiny grains from one of eight built-in sources or any sample. Position, spray, scan and freeze, grain size, density and jitter, pitch scatter, octave jumps, reverse grains, five grain windows, filter, LFO and an FX rack, with a live cloud view.",
+        },
+        {
             id: "chopshop", name: "Chop Shop", kind: "instrument", file: "plugins/chopshop.js", alt: "Serato Sample", icon: "Cs", color: "#ff6b6b", sizeKB: 45,
             blurb: "Sample chopper: finds 16 cues for you, detects key & BPM, shifts key without changing speed, time-stretches to your song and plays cues from pads or keys.",
         },
