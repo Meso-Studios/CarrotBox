@@ -20293,6 +20293,10 @@ FLKitLibrary._loadPromise = null;
             blurb: "Singing synthesizer: type lyrics (English, Japanese romaji, Spanish or Chinese pinyin) and every note sings the next syllable, glides between notes, with consonants, vowels, vibrato, scoops, breath, choir unison and nine voice presets.",
         },
         {
+            id: "sweeplab", name: "Sweep Lab", kind: "tool", file: "plugins/sweeplab.js", alt: "FL Studio transition FX", icon: "SL", color: "#4fc3f7", sizeKB: 18,
+            blurb: "FX sweeps on the beat: 14 risers, uplifters, Shepard rises, snare rolls, drop builds, reverse cymbals, whooshes, tape stops, downlifters, sub drops, impacts and lasers. Shape them, hear them, then drop them into the song so they end exactly on the bar (or start on it), once or every few bars.",
+        },
+        {
             id: "liveloops", name: "Live Loops", kind: "tool", file: "plugins/liveloops.js", alt: "GarageBand Live Loops", icon: "LL", color: "#2ecc71", sizeKB: 47,
             blurb: "A 16 x 16 loop launcher with 1,248 loops in 24 genres, composed at your song's tempo and key. Launch cells and scenes, then record the performance into the song.",
         },

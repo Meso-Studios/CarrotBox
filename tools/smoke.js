@@ -47,7 +47,7 @@ function check(label, ok, detail) {
 		await page.keyboard.press("Enter");
 		await page.waitForTimeout(500);
 	};
-	for (const query of ["swarm", "prism", "seedling", "chop", "sketch", "mangler", "utawa", "live loops", "bouncify", "sp-404", "audiomidi", "curvebox", "synth vault", "replica", "overtone", "nebula"]) {
+	for (const query of ["swarm", "prism", "seedling", "chop", "sketch", "mangler", "utawa", "live loops", "bouncify", "sp-404", "audiomidi", "curvebox", "synth vault", "replica", "overtone", "nebula", "sweep lab"]) {
 		await launch(query);
 		const opened = await count();
 		await page.locator(".cb-window .cb-window-title button[title^='Close']").first().click();
@@ -594,6 +594,30 @@ function check(label, ok, detail) {
 		return { kept, opened, gone };
 	}, ms1.ids);
 	check("My Songs: upload, reference track (undoable), AudioMidi hand-off, survives a reload, opens a project, deletes", ms1.audio && ms1.project && ms1.ref && ms1.undone && ms1.am && ms2.kept && ms2.opened && ms2.gone, JSON.stringify([ms1, ms2]));
+	// ---- Sweep Lab: a riser lands on the bar, falls repeat, undo removes them
+	const sw = await page.evaluate(async () => {
+		const plugin = await beepbox.CarrotPlugins.load("sweeplab");
+		const doc = editor.doc, song = doc.song, A = beepbox.CarrotAPI;
+		song.beatsPerBar = 4;
+		const channelsBefore = song.getChannelCount();
+		const okRise = plugin._place(doc, Object.assign({ type: "noise-riser", beats: 8, seed: 3 }, A.FLSweepers.type("noise-riser").def), [3]);
+		await new Promise(r => setTimeout(r, 50));
+		const ch = song.channels.find(c => /^FX Sweeps/.test(c.name));
+		const notes = ch ? [1, 2].map(b => { const n = ch.bars[b] ? ch.patterns[ch.bars[b] - 1].notes[0] : null; return n ? [n.pitches[0], n.start, n.end] : null; }) : [];
+		const inst = ch && ch.instruments[0];
+		const entry = inst ? A.FLSampleBank.requestNow(inst.fl.sampler.sampleId) : null;
+		const beatSamples = 44100 * 60 / song.tempo;
+		const lengthOk = entry && entry.status == "ready" && Math.abs(entry.pcm.length - 8 * beatSamples) < 2;
+		const slices = inst ? inst.fl.sampler.slices.length : -1;
+		const okFall = plugin._place(doc, Object.assign({ type: "downlifter", beats: 4, seed: 2 }, A.FLSweepers.type("downlifter").def), [4, 8]);
+		await new Promise(r => setTimeout(r, 50));
+		const falls = ch ? [4, 8].filter(b => ch.bars[b] > 0).length : 0;
+		const tooEarly = plugin._place(doc, Object.assign({ type: "uplifter", beats: 16 }, A.FLSweepers.type("uplifter").def), [1]);
+		doc.undo(); await new Promise(r => setTimeout(r, 300));
+		doc.undo(); await new Promise(r => setTimeout(r, 300));
+		return { okRise, okFall, tooEarly, notes, slices, lengthOk, falls, undone: song.getChannelCount() == channelsBefore };
+	});
+	check("Sweep Lab places a riser on the bar, repeats falls and undoes", sw.okRise && sw.okFall && !sw.tooEarly && JSON.stringify(sw.notes) == JSON.stringify([[48, 0, 4 * 48], [49, 0, 4 * 48]]) && sw.slices == 1 && sw.lengthOk && sw.falls == 2 && sw.undone, JSON.stringify(sw));
 	check("no errors in the console", errors.length == 0, errors.slice(0, 5).join(" | "));
 	await browser.close();
 	server.close();
