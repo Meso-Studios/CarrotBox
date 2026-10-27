@@ -20273,6 +20273,10 @@ FLKitLibrary._loadPromise = null;
             blurb: "114 ready-to-play sounds from nine classic-instrument engines (ladder monosynth, poly analog, dual-layer CS, 6-op FM, tine and reed electric pianos and a clav, acoustic piano, tonewheel organ with rotary speaker, string machine, tape replay) in one browser with types, characters, likes and previews, four macros, Multi split/layer and an FX rack.",
         },
         {
+            id: "overtone", name: "Overtone", kind: "instrument", file: "plugins/overtone.js", alt: "Harmor", icon: "Ov", color: "#e53935", sizeKB: 70,
+            blurb: "Additive and resynthesis synth: every note is a stack of harmonics shaped by two timbres (or a resynthesized sample), harmonizer, prism, spectral filters, phaser, pluck, blur and tremolo, with a graph editor of envelopes and LFOs for every target, unison and two layered parts.",
+        },
+        {
             id: "chopshop", name: "Chop Shop", kind: "instrument", file: "plugins/chopshop.js", alt: "Serato Sample", icon: "Cs", color: "#ff6b6b", sizeKB: 45,
             blurb: "Sample chopper: finds 16 cues for you, detects key & BPM, shifts key without changing speed, time-stretches to your song and plays cues from pads or keys.",
         },
