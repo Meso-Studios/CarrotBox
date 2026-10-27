@@ -10671,6 +10671,7 @@ var beepbox = (function (exports) {
     //@@INCLUDE fl_soundpacks4.js@@
     //@@INCLUDE fl_loops.js@@
     //@@INCLUDE fl_sweepers.js@@
+    //@@INCLUDE fl_cc0.js@@
     //@@INCLUDE fl_dsp.js@@
     //@@INCLUDE fl_plugins.js@@
     //@@INCLUDE fl_leadgen.js@@

@@ -1,0 +1,10 @@
+These samples come from the Versilian Community Sample Library (VCSL)
+by Versilian Studios LLC: https://github.com/sgossner/VCSL
+
+VCSL is released under Creative Commons Zero (CC0 1.0 Universal): public
+domain, free for any use, commercial included, with no credit required.
+https://creativecommons.org/publicdomain/zero/1.0/
+
+For CarrotBox they were trimmed, mixed to mono, resampled to 44.1 kHz,
+peak-normalized, faded at the end and saved as 16-bit FLAC. Thanks to
+Versilian Studios for giving them away.

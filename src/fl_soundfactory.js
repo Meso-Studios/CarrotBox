@@ -867,6 +867,8 @@
             const info = FLSoundFactory.getInfo(key);
             if (!info)
                 return null;
+            if (info.gen == "file")
+                return FLRealSamples.cached(info); // recorded samples load asynchronously (null until then)
             const pcm = FLGen[info.gen](info.params, flRng(key));
             const result = { pcm, rate: FL_SR, name: info.name, rootKey: info.rootKey == undefined ? null : info.rootKey, loop: info.loop || null, bpm: info.bpm || null };
             FLSoundFactory._cache.set(key, result);

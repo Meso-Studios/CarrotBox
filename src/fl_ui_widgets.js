@@ -159,7 +159,9 @@
                 flToast(String(error.message || error));
                 return;
             }
-            const entry = id.startsWith("b:") ? FLSampleBank.requestNow(id) : await FLSampleBank.whenReady(id);
+            let entry = id.startsWith("b:") ? FLSampleBank.requestNow(id) : await FLSampleBank.whenReady(id);
+            if (entry && entry.status == "loading")
+                entry = await FLSampleBank.whenReady(id);
             if (entry.status != "ready") {
                 flToast("Couldn't decode " + (payload.name || "that file") + ".");
                 return;

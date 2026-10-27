@@ -172,7 +172,11 @@
                 return entry;
             entry = { id, name: "", pcm: null, rate: 44100, status: "loading", rootKey: null, loopStart: null, loopEnd: null, cues: null };
             FLSampleBank._entries.set(id, entry);
-            if (id.startsWith("b:")) {
+            const fileInfo = id.startsWith("b:") ? FLSoundFactory.getInfo(id.slice(2)) : null;
+            if (fileInfo && fileInfo.gen == "file") {
+                FLRealSamples.fill(entry, fileInfo);
+            }
+            else if (id.startsWith("b:")) {
                 setTimeout(() => {
                     try {
                         const rendered = FLSoundFactory.render(id.slice(2));
@@ -468,7 +472,9 @@
             FLSampleBank._previewSource = source;
         }
         static async preview(id, start = 0, end = 1, playbackRate = 1) {
-            const entry = id.startsWith("b:") ? FLSampleBank.requestNow(id) : await FLSampleBank.whenReady(id);
+            let entry = id.startsWith("b:") ? FLSampleBank.requestNow(id) : await FLSampleBank.whenReady(id);
+            if (entry && entry.status == "loading")
+                entry = await FLSampleBank.whenReady(id);
             if (entry.status == "ready")
                 FLSampleBank.previewPcm(entry.pcm, entry.rate, start, end, playbackRate);
         }

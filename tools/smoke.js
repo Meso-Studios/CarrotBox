@@ -618,6 +618,20 @@ function check(label, ok, detail) {
 		return { okRise, okFall, tooEarly, notes, slices, lengthOk, falls, undone: song.getChannelCount() == channelsBefore };
 	});
 	check("Sweep Lab places a riser on the bar, repeats falls and undoes", sw.okRise && sw.okFall && !sw.tooEarly && JSON.stringify(sw.notes) == JSON.stringify([[48, 0, 4 * 48], [49, 0, 4 * 48]]) && sw.slices == 1 && sw.lengthOk && sw.falls == 2 && sw.undone, JSON.stringify(sw));
+	// ---- real recorded (CC0) samples load from samples/vcsl and show up in genre packs
+	const real = await page.evaluate(async () => {
+		const F = beepbox.FLSoundFactory, S = beepbox.FLSampleBank;
+		const items = F.getCatalog().filter(i => i.gen == "file");
+		const files = new Set(items.map(i => i.params.file));
+		const bad = [];
+		for (const file of files) {
+			const it = items.find(i => i.params.file == file);
+			const e = await S.whenReady("b:" + it.key);
+			if (e.status != "ready" || e.pcm.length < 1000) bad.push(file + ":" + e.status);
+		}
+		return { files: files.size, items: items.length, phonk: items.filter(i => /^Packs\/Phonk\/Real/.test(i.path)).length, bad };
+	});
+	check("real recorded CC0 samples load and fill the genre packs", real.files == 56 && real.bad.length == 0 && real.phonk >= 15 && real.items > 800, JSON.stringify(real));
 	check("no errors in the console", errors.length == 0, errors.slice(0, 5).join(" | "));
 	await browser.close();
 	server.close();
