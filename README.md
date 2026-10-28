@@ -292,12 +292,19 @@ Every tab can write to the bar you choose (0 means the bar you have selected), a
 
 A creative multi-effect rack in the spirit of UGFX. Chain up to **8 effects** from this list:
 
-Distortion, Bitcrusher, Filter, Chorus, Flanger, Phaser, Delay, Reverb, Glitch Repeat, Tape Stop, Ring Mod, Tremolo / Pan, Compressor, Multiband (OTT), Stereo Width, Lo-fi / Vinyl, 3-Band EQ, Noise Gate, De-esser and Utility.
+Distortion, Tape Saturation, Bitcrusher, Filter, 3-Band EQ, Chorus, Ensemble, Flanger, Phaser, Delay, Tape Echo, Reverb, Plate Reverb, Glitch Repeat, Tape Stop, Ring Mod, Tremolo / Pan, Sidechain Pump, Compressor, Multiband (OTT), Transient Shaper, Stereo Width, Lo-fi / Vinyl, Noise Gate, De-esser and Utility.
+
+- **Plate Reverb** is a dense, smooth stereo plate (a Dattorro tank with moving allpasses) with size, decay, damping, pre-delay and movement.
+- **Tape Saturation** leans to one side like a hot tape (warm even harmonics), with the low head bump, rolled-off highs, wow, flutter and hiss.
+- **Tape Echo** is a beat-synced delay whose repeats get darker, thinner, warmer and a little wobbly every time round.
+- **Sidechain Pump** ducks the sound on every beat (or any note value) and lets it swell back, like a compressor keyed from the kick.
+- **Transient Shaper** adds or removes attack and tail at any level; **Ensemble** is a thick three-voice string-machine chorus.
+- **Distortion** runs its shaper at twice the sample rate with a DC blocker, so heavy drive stays smooth instead of harsh.
 
 - a **signal flow** diagram shows the chain
 - **4 macros** can each control any parameter of any effect with a positive or negative amount, which makes it easy to build one-knob sweeps, drops and builds
 - input gain, dry/wet and output gain
-- 13 factory presets (Space Sweep, Tape Warble, Stutter Gate, Halftime Brake, Pulse Pan, Bit Furnace, Fold Machine, Radio Wreck, Dub Echo, Cathedral, Jet Flange and more)
+- 22 factory presets (Space Sweep, Tape Warble, Stutter Gate, Halftime Brake, Pulse Pan, Bit Furnace, Fold Machine, Radio Wreck, Dub Echo, Cathedral, Jet Flange, Bright Plate, Tape Echo Dub, Ensemble Wash, Punch & Glue, Four on the Floor Duck and a Phonk group: Cowbell Grit, Memphis Tape, Drift Pump and 808 Smash)
 
 The same rack is built into Swarm, Prism, Seedling and Utawa as their "Effects" tab.
 

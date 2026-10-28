@@ -19,7 +19,7 @@
             blurb: "Grow sounds instead of programming them: plant a seed, explore its mutated branches, edit the sound's DNA, or let it grow a patch that imitates a sample.",
         },
         {
-            id: "synthvault", name: "Synth Vault", kind: "instrument", file: "plugins/synthvault.js", alt: "Analog Lab Pro", icon: "SV", color: "#ff8a2a", sizeKB: 120,
+            id: "synthvault", name: "Synth Vault", kind: "instrument", file: "plugins/synthvault.js", alt: "Analog Lab Pro", icon: "SV", color: "#ff8a2a", sizeKB: 125,
             blurb: "114 ready-to-play sounds from nine classic-instrument engines (ladder monosynth, poly analog, dual-layer CS, 6-op FM, tine and reed electric pianos and a clav, acoustic piano, tonewheel organ with rotary speaker, string machine, tape replay) in one browser with types, characters, likes and previews, four macros, Multi split/layer and an FX rack.",
         },
         {
@@ -71,7 +71,7 @@
             blurb: "The plugin for the Roland SP-404MKII (works while one is connected): a working copy of its panel with 160 pads in 10 banks, sample modes and editing, sampling, resampling and skip-back, 4 buses with 44 effects, the pattern sequencer with TR-REC, DJ mode, every SHIFT + pad function and projects. Mirrors the device's pads, banks, knobs and patterns over USB MIDI, and patterns can be written into the song.",
         },
         {
-            id: "mangler", name: "Mangler FX", kind: "effect", file: "plugins/mangler.js", alt: "UGFX", icon: "Mg", color: "#f78c6c", sizeKB: 21,
+            id: "mangler", name: "Mangler FX", kind: "effect", file: "plugins/mangler.js", alt: "UGFX", icon: "Mg", color: "#f78c6c", sizeKB: 25,
             blurb: "Creative multi-effect rack: chain up to 8 effects (distortion, crusher, filter sweeps, chorus, phaser, flanger, delay, reverb, glitch repeats, tape stop...) with macros and presets.",
         },
     ];
@@ -775,6 +775,10 @@
             this.sampleRate = sampleRate;
             this.lpL = 0;
             this.lpR = 0;
+            // 2x oversampling (the previous input, for the in-between sample) and a DC blocker
+            this.xL = 0;
+            this.xR = 0;
+            this.dcxL = this.dcyL = this.dcxR = this.dcyR = 0;
         }
         static shape(mode, x) {
             switch (mode) {
@@ -799,16 +803,35 @@
             const tone = CarrotFX.p(p, "distortion", "tone");
             const coef = 1 - Math.exp(-2 * Math.PI * tone / ctx.sampleRate);
             const mix = CarrotFX.p(p, "distortion", "mix");
-            let lpL = this.lpL, lpR = this.lpR;
+            // The shaper runs at twice the rate (the in-between sample interpolated, the two results
+            // averaged), which keeps the harmonics it makes above the top of the spectrum from folding
+            // back down as harsh aliasing; a DC blocker takes out the offset of the uneven shapers.
+            const shape = CarrotFXDistortion.shape, dc = 1 - 2 * Math.PI * 12 / ctx.sampleRate;
+            let lpL = this.lpL, lpR = this.lpR, xL = this.xL, xR = this.xR;
+            let dcxL = this.dcxL, dcyL = this.dcyL, dcxR = this.dcxR, dcyR = this.dcyR;
             for (let i = start; i < end; i++) {
                 const l = L[i], r = R[i];
-                lpL += (CarrotFXDistortion.shape(mode, l * drive) - lpL) * coef;
-                lpR += (CarrotFXDistortion.shape(mode, r * drive) - lpR) * coef;
+                const sl = 0.5 * (shape(mode, (xL + l) * 0.5 * drive) + shape(mode, l * drive));
+                const sr = 0.5 * (shape(mode, (xR + r) * 0.5 * drive) + shape(mode, r * drive));
+                xL = l;
+                xR = r;
+                dcyL = sl - dcxL + dc * dcyL;
+                dcxL = sl;
+                dcyR = sr - dcxR + dc * dcyR;
+                dcxR = sr;
+                lpL += (dcyL - lpL) * coef;
+                lpR += (dcyR - lpR) * coef;
                 L[i] = carrotMix(l, lpL * out, mix);
                 R[i] = carrotMix(r, lpR * out, mix);
             }
             this.lpL = lpL;
             this.lpR = lpR;
+            this.xL = xL;
+            this.xR = xR;
+            this.dcxL = dcxL;
+            this.dcyL = dcyL;
+            this.dcxR = dcxR;
+            this.dcyR = dcyR;
         }
     }
     class CarrotFXCrusher {
@@ -1390,6 +1413,287 @@
             }
         }
     }
+    // Plate reverb (Dattorro): the input is smeared by four diffusers, then circulates in a
+    // figure-eight tank of two delay lines with modulated allpasses and damping; the stereo output
+    // is read from taps all over the tank. Dense, smooth and wide, without the metallic ring of a
+    // comb-filter reverb.
+    class CarrotFXPlate {
+        constructor(sampleRate) {
+            const k = sampleRate / 29761, MAXSIZE = 1.5;
+            const line = (n) => new CarrotDelayLine(Math.ceil(n * k * MAXSIZE) + 40);
+            this.k = k;
+            this.pre = new CarrotDelayLine(Math.ceil(sampleRate * 0.25));
+            this.inAp = [142, 107, 379, 277].map(n => ({ n, d: line(n) }));
+            this.tank = [
+                { mod: { n: 672, d: line(672 + 32) }, d1: { n: 4453, d: line(4453) }, ap: { n: 1800, d: line(1800) }, d2: { n: 3720, d: line(3720) }, lp: 0, phase: 0 },
+                { mod: { n: 908, d: line(908 + 32) }, d1: { n: 4217, d: line(4217) }, ap: { n: 2656, d: line(2656) }, d2: { n: 3163, d: line(3163) }, lp: 0, phase: 0.25 },
+            ];
+            this.bw = 0;
+            this.fb = [0, 0];
+        }
+        static allpass(a, x, g, len) {
+            const delayed = a.d.read(len);
+            const v = x + g * delayed;
+            a.d.write(v);
+            return delayed - g * v;
+        }
+        process(p, L, R, start, end, ctx) {
+            const sr = ctx.sampleRate, k = this.k;
+            const size = 0.5 + CarrotFX.p(p, "plate", "size");
+            const decay = Math.min(0.97, CarrotFX.p(p, "plate", "decay"));
+            const damp = CarrotFX.p(p, "plate", "damp");
+            const mod = CarrotFX.p(p, "plate", "mod");
+            const width = CarrotFX.p(p, "plate", "width");
+            const mix = CarrotFX.p(p, "plate", "mix");
+            const predelay = Math.max(1, CarrotFX.p(p, "plate", "predelay") * sr / 1000);
+            const bwCoef = 0.9995 - 0.3 * damp, dampCoef = 0.05 + 0.75 * damp;
+            const len = (n) => Math.max(1, n * k * size);
+            const inLen = this.inAp.map(a => len(a.n));
+            const T = this.tank;
+            const tl = T.map(t => ({ mod: len(t.mod.n), d1: len(t.d1.n), ap: len(t.ap.n), d2: len(t.d2.n) }));
+            // output taps (Dattorro's positions), scaled with the size and kept inside their lines
+            const at = (n, max) => Math.max(1, Math.min(n * k * size, max - 1));
+            const a = T[0], b = T[1], la = tl[0], lb = tl[1];
+            const tL = [at(266, lb.d1), at(2974, lb.d1), at(1913, lb.ap), at(1996, lb.d2), at(1990, la.d1), at(187, la.ap), at(1066, la.d2)];
+            const tR = [at(353, la.d1), at(3627, la.d1), at(1228, la.ap), at(2673, la.d2), at(2111, lb.d1), at(335, lb.ap), at(121, lb.d2)];
+            const lfoInc = 0.9 / sr, excursion = 16 * k * mod;
+            for (let i = start; i < end; i++) {
+                this.pre.write((L[i] + R[i]) * 0.5);
+                let x = this.pre.read(predelay);
+                this.bw += (x - this.bw) * bwCoef;
+                x = this.bw;
+                x = CarrotFXPlate.allpass(this.inAp[0], x, 0.75, inLen[0]);
+                x = CarrotFXPlate.allpass(this.inAp[1], x, 0.75, inLen[1]);
+                x = CarrotFXPlate.allpass(this.inAp[2], x, 0.625, inLen[2]);
+                x = CarrotFXPlate.allpass(this.inAp[3], x, 0.625, inLen[3]);
+                const fb0 = this.fb[1], fb1 = this.fb[0];
+                for (let h = 0; h < 2; h++) {
+                    const t = T[h], l = tl[h];
+                    t.phase += lfoInc;
+                    if (t.phase >= 1) t.phase -= 1;
+                    const m = l.mod + excursion * Math.sin(t.phase * 6.283185307179586);
+                    let v = x + (h == 0 ? fb0 : fb1) * decay;
+                    v = CarrotFXPlate.allpass(t.mod, v, -0.7, Math.max(1, m));
+                    t.d1.d.write(v);
+                    v = t.d1.d.read(l.d1);
+                    t.lp += (v - t.lp) * (1 - dampCoef);
+                    v = t.lp * decay;
+                    v = CarrotFXPlate.allpass(t.ap, v, 0.5, l.ap);
+                    t.d2.d.write(v);
+                    this.fb[h] = t.d2.d.read(l.d2);
+                }
+                let wl = b.d1.d.read(tL[0]) + b.d1.d.read(tL[1]) - b.ap.d.read(tL[2]) + b.d2.d.read(tL[3]) - a.d1.d.read(tL[4]) - a.ap.d.read(tL[5]) - a.d2.d.read(tL[6]);
+                let wr = a.d1.d.read(tR[0]) + a.d1.d.read(tR[1]) - a.ap.d.read(tR[2]) + a.d2.d.read(tR[3]) - b.d1.d.read(tR[4]) - b.ap.d.read(tR[5]) - b.d2.d.read(tR[6]);
+                const mid = (wl + wr) * 0.5, side = (wl - wr) * 0.5 * width;
+                wl = (mid + side) * 0.6;
+                wr = (mid - side) * 0.6;
+                L[i] = L[i] * (1 - mix * 0.5) + wl * mix;
+                R[i] = R[i] * (1 - mix * 0.5) + wr * mix;
+            }
+        }
+    }
+    // Tape: saturation that leans to one side (even harmonics, like a hot tape), the low "head
+    // bump", high frequencies rolling off, wow and flutter, and a little hiss.
+    class CarrotFXTape {
+        constructor(sampleRate) {
+            this.dl = new CarrotDelayLine(Math.ceil(sampleRate * 0.03));
+            this.dr = new CarrotDelayLine(Math.ceil(sampleRate * 0.03));
+            this.bump = [new CarrotBiquad(), new CarrotBiquad()];
+            this.lpL = this.lpR = this.lp2L = this.lp2R = 0;
+            this.xL = this.xR = 0;
+            this.dcxL = this.dcyL = this.dcxR = this.dcyR = 0;
+            this.wow = 0;
+            this.flutter = 0;
+            this.drift = 0;
+            this.hash = "";
+            this.random = CarrotDSP.rng(4242);
+        }
+        static sat(x, bias) {
+            return Math.tanh(x + bias) - Math.tanh(bias);
+        }
+        process(p, L, R, start, end, ctx) {
+            const sr = ctx.sampleRate;
+            const drive = CarrotDSP.dbToGain(CarrotFX.p(p, "tape", "drive"));
+            const warmth = CarrotFX.p(p, "tape", "warmth");
+            const tone = CarrotFX.p(p, "tape", "tone");
+            const wowDepth = CarrotFX.p(p, "tape", "wow");
+            const flutterDepth = CarrotFX.p(p, "tape", "flutter");
+            const hiss = CarrotFX.p(p, "tape", "hiss");
+            const mix = CarrotFX.p(p, "tape", "mix");
+            const hash = warmth + "," + sr;
+            if (hash != this.hash) {
+                this.hash = hash;
+                for (const b of this.bump) b.set(2, 90, warmth * 6, 0.9, sr);
+            }
+            const coef = 1 - Math.exp(-2 * Math.PI * tone / sr);
+            const out = 1 / Math.max(1, Math.tanh(drive) * 1.1 + 0.2 * Math.log(drive + 1));
+            const bias = 0.18, dc = 1 - 2 * Math.PI * 12 / sr, rand = this.random;
+            const shape = CarrotFXTape.sat;
+            for (let i = start; i < end; i++) {
+                this.wow += 0.6 / sr;
+                if (this.wow >= 1) this.wow -= 1;
+                this.flutter += 7.5 / sr;
+                if (this.flutter >= 1) this.flutter -= 1;
+                this.drift += ((rand() * 2 - 1) - this.drift) * 0.0005;
+                const delay = 2 + sr * 0.001 * (wowDepth * 2.5 * (1 + Math.sin(this.wow * 6.283185307179586) + 0.4 * this.drift) + flutterDepth * 0.25 * (1 + Math.sin(this.flutter * 6.283185307179586)));
+                const l = L[i], r = R[i];
+                this.dl.write(this.bump[0].process(l));
+                this.dr.write(this.bump[1].process(r));
+                const il = this.dl.read(delay) * drive, ir = this.dr.read(delay) * drive;
+                // saturation at twice the rate, then the DC from the bias out
+                let yl = 0.5 * (shape((this.xL + il) * 0.5, bias) + shape(il, bias));
+                let yr = 0.5 * (shape((this.xR + ir) * 0.5, bias) + shape(ir, bias));
+                this.xL = il;
+                this.xR = ir;
+                this.dcyL = yl - this.dcxL + dc * this.dcyL;
+                this.dcxL = yl;
+                this.dcyR = yr - this.dcxR + dc * this.dcyR;
+                this.dcxR = yr;
+                // high-frequency loss: two gentle poles
+                this.lpL += (this.dcyL - this.lpL) * coef;
+                this.lp2L += (this.lpL - this.lp2L) * coef;
+                this.lpR += (this.dcyR - this.lpR) * coef;
+                this.lp2R += (this.lpR - this.lp2R) * coef;
+                const n = hiss > 0 ? (rand() * 2 - 1) * hiss * 0.006 : 0;
+                L[i] = carrotMix(l, this.lp2L * out + n, mix);
+                R[i] = carrotMix(r, this.lp2R * out + n, mix);
+            }
+        }
+    }
+    // Tape echo: a beat-synced delay whose repeats get darker, thinner, warmer and a little wobbly
+    // each time round (filters and saturation inside the feedback loop).
+    class CarrotFXTapeEcho {
+        constructor(sampleRate) {
+            this.dl = new CarrotDelayLine(Math.ceil(sampleRate * 4.2));
+            this.dr = new CarrotDelayLine(Math.ceil(sampleRate * 4.2));
+            this.lpL = this.lpR = this.hpL = this.hpR = 0;
+            this.smooth = 0;
+            this.wow = 0;
+        }
+        process(p, L, R, start, end, ctx) {
+            const sr = ctx.sampleRate;
+            const beats = carrotSyncBeats(p.time != undefined ? p.time : 7);
+            const target = Math.min(sr * 4, beats * ctx.samplesPerBeat);
+            if (this.smooth == 0) this.smooth = target;
+            const feedback = CarrotFX.p(p, "tapeecho", "feedback");
+            const tone = CarrotFX.p(p, "tapeecho", "tone");
+            const low = CarrotFX.p(p, "tapeecho", "lowcut");
+            const drive = 1 + 3 * CarrotFX.p(p, "tapeecho", "drive");
+            const wowDepth = CarrotFX.p(p, "tapeecho", "wow");
+            const spread = CarrotFX.p(p, "tapeecho", "spread");
+            const mix = CarrotFX.p(p, "tapeecho", "mix");
+            const lpc = 1 - Math.exp(-2 * Math.PI * tone / sr), hpc = 1 - Math.exp(-2 * Math.PI * low / sr);
+            for (let i = start; i < end; i++) {
+                this.smooth += (target - this.smooth) * 0.0004;
+                this.wow += 0.8 / sr;
+                if (this.wow >= 1) this.wow -= 1;
+                const w = wowDepth * sr * 0.0025 * Math.sin(this.wow * 6.283185307179586);
+                const dL = Math.max(1, this.smooth + w), dR = Math.max(1, this.smooth * (1 + 0.04 * spread) - w);
+                let el = this.dl.read(dL), er = this.dr.read(dR);
+                // darker and thinner each pass
+                this.lpL += (el - this.lpL) * lpc;
+                this.lpR += (er - this.lpR) * lpc;
+                this.hpL += (this.lpL - this.hpL) * hpc;
+                this.hpR += (this.lpR - this.hpR) * hpc;
+                el = this.lpL - this.hpL;
+                er = this.lpR - this.hpR;
+                const l = L[i], r = R[i];
+                this.dl.write(Math.tanh((l + el * feedback) * drive) / drive);
+                this.dr.write(Math.tanh((r + er * feedback) * drive) / drive);
+                L[i] = l + el * mix;
+                R[i] = r + er * mix;
+            }
+        }
+    }
+    // Sidechain pump: the level ducks on every beat (or any note value) and comes back up, like a
+    // compressor keyed from a four-on-the-floor kick.
+    class CarrotFXPump {
+        constructor(sampleRate) {
+            this.gain = 1;
+        }
+        process(p, L, R, start, end, ctx) {
+            const beats = carrotSyncBeats(p.rate != undefined ? p.rate : 9);
+            const depth = CarrotFX.p(p, "pump", "depth");
+            const release = CarrotFX.p(p, "pump", "release");
+            const curve = CarrotFX.p(p, "pump", "curve");
+            const offset = CarrotFX.p(p, "pump", "offset");
+            const smooth = 1 - Math.exp(-1 / (0.0015 * ctx.sampleRate));
+            for (let i = start; i < end; i++) {
+                const beat = ctx.beatPos + (i - start) / ctx.samplesPerBeat;
+                const ph = (((beat / beats) - offset) % 1 + 1) % 1;
+                const u = Math.min(1, ph / Math.max(0.02, release));
+                const target = 1 - depth * (1 - Math.pow(u, curve));
+                this.gain += (target - this.gain) * smooth;
+                L[i] *= this.gain;
+                R[i] *= this.gain;
+            }
+        }
+    }
+    // Transient shaper: more (or less) attack and more (or less) tail, whatever the level.
+    class CarrotFXTransient {
+        constructor(sampleRate) {
+            this.fast = 0;
+            this.slow = 0;
+            this.gain = 1;
+        }
+        process(p, L, R, start, end, ctx) {
+            const sr = ctx.sampleRate;
+            const attack = CarrotFX.p(p, "transient", "attack");
+            const sustain = CarrotFX.p(p, "transient", "sustain");
+            const out = CarrotDSP.dbToGain(CarrotFX.p(p, "transient", "out"));
+            const fa = 1 - Math.exp(-1 / (0.0008 * sr)), fr = 1 - Math.exp(-1 / (0.03 * sr));
+            const sa = 1 - Math.exp(-1 / (0.02 * sr)), srl = 1 - Math.exp(-1 / (0.25 * sr));
+            const smooth = 1 - Math.exp(-1 / (0.001 * sr));
+            for (let i = start; i < end; i++) {
+                const level = Math.max(Math.abs(L[i]), Math.abs(R[i]));
+                this.fast += (level - this.fast) * (level > this.fast ? fa : fr);
+                this.slow += (level - this.slow) * (level > this.slow ? sa : srl);
+                const ratio = (this.fast + 1e-5) / (this.slow + 1e-5);
+                let g = ratio > 1 ? Math.pow(ratio, attack * 0.6) : Math.pow(1 / ratio, sustain * 0.8);
+                g = Math.max(0.25, Math.min(3, g));
+                this.gain += (g - this.gain) * smooth;
+                L[i] *= this.gain * out;
+                R[i] *= this.gain * out;
+            }
+        }
+    }
+    // Ensemble: three slowly moving delay lines, a third of a cycle apart, plus a fast shimmer (the
+    // string-machine and Juno chorus sound): thick and wide, with no single wobble to hear.
+    class CarrotFXEnsemble {
+        constructor(sampleRate) {
+            this.d = new CarrotDelayLine(Math.ceil(sampleRate * 0.04));
+            this.slow = 0;
+            this.fast = 0;
+        }
+        process(p, L, R, start, end, ctx) {
+            const sr = ctx.sampleRate;
+            const rate = CarrotFX.p(p, "ensemble", "rate");
+            const depth = CarrotFX.p(p, "ensemble", "depth");
+            const width = CarrotFX.p(p, "ensemble", "width");
+            const mix = CarrotFX.p(p, "ensemble", "mix");
+            const base = 0.008 * sr, slowAmt = depth * 0.004 * sr, fastAmt = depth * 0.0004 * sr;
+            const TAU = 6.283185307179586;
+            for (let i = start; i < end; i++) {
+                this.slow += rate / sr;
+                if (this.slow >= 1) this.slow -= 1;
+                this.fast += rate * 7.3 / sr;
+                if (this.fast >= 1) this.fast -= 1;
+                const l = L[i], r = R[i];
+                this.d.write((l + r) * 0.5);
+                const v = [];
+                for (let k = 0; k < 3; k++) {
+                    const ph = k / 3;
+                    const dly = base + slowAmt * (1 + Math.sin((this.slow + ph) * TAU)) + fastAmt * (1 + Math.sin((this.fast + ph) * TAU));
+                    v.push(this.d.read(dly));
+                }
+                const c = v[0] * 0.5;
+                const wl = c + v[1] * (0.5 + 0.5 * width) + v[2] * (0.5 - 0.5 * width);
+                const wr = c + v[2] * (0.5 + 0.5 * width) + v[1] * (0.5 - 0.5 * width);
+                L[i] = l * (1 - mix * 0.5) + wl * mix * 0.6;
+                R[i] = r * (1 - mix * 0.5) + wr * mix * 0.6;
+            }
+        }
+    }
     const CARROT_PERCENT = (v) => Math.round(v * 100) + "%";
     CarrotFX.types = {
         distortion: {
@@ -1550,6 +1854,64 @@
                 { key: "amount", label: "Amount", min: 0, max: 1, def: 0.5, format: CARROT_PERCENT },
             ],
         },
+        plate: {
+            name: "Plate Reverb", impl: CarrotFXPlate, params: [
+                { key: "size", label: "Size", min: 0, max: 1, def: 0.5, format: CARROT_PERCENT },
+                { key: "decay", label: "Decay", min: 0, max: 0.97, def: 0.6, format: CARROT_PERCENT },
+                { key: "damp", label: "Damping", min: 0, max: 1, def: 0.35, format: CARROT_PERCENT },
+                { key: "predelay", label: "Pre-delay", min: 0, max: 200, def: 15, unit: "ms" },
+                { key: "mod", label: "Movement", min: 0, max: 1, def: 0.5, format: CARROT_PERCENT },
+                { key: "width", label: "Width", min: 0, max: 1.5, def: 1, format: CARROT_PERCENT },
+                { key: "mix", label: "Mix", min: 0, max: 1, def: 0.3, format: CARROT_PERCENT },
+            ],
+        },
+        tape: {
+            name: "Tape Saturation", impl: CarrotFXTape, params: [
+                { key: "drive", label: "Drive", min: -6, max: 24, def: 6, unit: "dB" },
+                { key: "warmth", label: "Warmth", min: 0, max: 1, def: 0.5, format: CARROT_PERCENT },
+                { key: "tone", label: "Tone", min: 1500, max: 20000, def: 11000, unit: "Hz", curve: "exp" },
+                { key: "wow", label: "Wow", min: 0, max: 1, def: 0.15, format: CARROT_PERCENT },
+                { key: "flutter", label: "Flutter", min: 0, max: 1, def: 0.15, format: CARROT_PERCENT },
+                { key: "hiss", label: "Hiss", min: 0, max: 1, def: 0.1, format: CARROT_PERCENT },
+                { key: "mix", label: "Mix", min: 0, max: 1, def: 1, format: CARROT_PERCENT },
+            ],
+        },
+        tapeecho: {
+            name: "Tape Echo", impl: CarrotFXTapeEcho, params: [
+                { key: "time", label: "Time", options: carrotSyncOptions(), def: 7 },
+                { key: "feedback", label: "Feedback", min: 0, max: 1.05, def: 0.5, format: CARROT_PERCENT },
+                { key: "tone", label: "Tone", min: 500, max: 12000, def: 3200, unit: "Hz", curve: "exp" },
+                { key: "lowcut", label: "Low cut", min: 20, max: 1500, def: 180, unit: "Hz", curve: "exp" },
+                { key: "drive", label: "Drive", min: 0, max: 1, def: 0.35, format: CARROT_PERCENT },
+                { key: "wow", label: "Wow", min: 0, max: 1, def: 0.3, format: CARROT_PERCENT },
+                { key: "spread", label: "Spread", min: 0, max: 1, def: 0.4, format: CARROT_PERCENT },
+                { key: "mix", label: "Mix", min: 0, max: 1, def: 0.35, format: CARROT_PERCENT },
+            ],
+        },
+        pump: {
+            name: "Sidechain Pump", impl: CarrotFXPump, params: [
+                { key: "rate", label: "Every", options: carrotSyncOptions(), def: 9 },
+                { key: "depth", label: "Depth", min: 0, max: 1, def: 0.7, format: CARROT_PERCENT },
+                { key: "release", label: "Release", min: 0.05, max: 1, def: 0.6, format: CARROT_PERCENT },
+                { key: "curve", label: "Curve", min: 0.3, max: 4, def: 1.6, step: 0.05 },
+                { key: "offset", label: "Offset", min: 0, max: 0.5, def: 0, format: CARROT_PERCENT },
+            ],
+        },
+        transient: {
+            name: "Transient Shaper", impl: CarrotFXTransient, params: [
+                { key: "attack", label: "Attack", min: -1, max: 1, def: 0.4, format: CARROT_PERCENT },
+                { key: "sustain", label: "Sustain", min: -1, max: 1, def: 0, format: CARROT_PERCENT },
+                { key: "out", label: "Output", min: -12, max: 12, def: 0, unit: "dB" },
+            ],
+        },
+        ensemble: {
+            name: "Ensemble", impl: CarrotFXEnsemble, params: [
+                { key: "rate", label: "Rate", min: 0.1, max: 3, def: 0.6, unit: "Hz", curve: "exp" },
+                { key: "depth", label: "Depth", min: 0, max: 1, def: 0.6, format: CARROT_PERCENT },
+                { key: "width", label: "Width", min: 0, max: 1, def: 0.8, format: CARROT_PERCENT },
+                { key: "mix", label: "Mix", min: 0, max: 1, def: 0.5, format: CARROT_PERCENT },
+            ],
+        },
         utility: {
             name: "Utility", impl: CarrotFXUtility, params: [
                 { key: "gain", label: "Gain", min: -24, max: 24, def: 0, unit: "dB" },
@@ -1558,4 +1920,4 @@
             ],
         },
     };
-    CarrotFX.typeOrder = ["distortion", "crusher", "filter", "eq3", "chorus", "flanger", "phaser", "delay", "reverb", "glitch", "tapestop", "ringmod", "tremolo", "compressor", "multiband", "widener", "lofi", "gate", "deesser", "utility"];
+    CarrotFX.typeOrder = ["distortion", "tape", "crusher", "filter", "eq3", "chorus", "ensemble", "flanger", "phaser", "delay", "tapeecho", "reverb", "plate", "glitch", "tapestop", "ringmod", "tremolo", "pump", "compressor", "multiband", "transient", "widener", "lofi", "gate", "deesser", "utility"];

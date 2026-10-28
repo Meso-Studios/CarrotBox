@@ -342,6 +342,48 @@
         }
         for (const genre of Object.keys(CLASSIC_PARTS))
             addParts("Genre Kits/" + genre, "", CLASSIC_PARTS[genre], "classic/" + genre);
+        // More phonk: cowbell and drift leads, sirens, reese and hoover leads, Memphis squares and
+        // brass, music-box and funk plucks, drift chords and gritty 808s. [folder, shown name,
+        // recipe, changes]; the numbers carry on after the folder's sounds.
+        const PHONK_MORE = [
+            ["Leads", "Cowbell Lead", "Bell Pluck", { ratio: 1.48, index: 3, drive: 5, decay: 0.35, len: 0.8 }],
+            ["Leads", "Drift Lead", "Glide Lead", { glide: -5, drive: 3, crush: 10, cutoff: 3500 }],
+            ["Leads", "Siren Lead", "Sync Lead", { vib: 0.6, vibRate: 7, crush: 10 }],
+            ["Leads", "Reese Lead", "Distorted Lead", { voices: 4, detune: 0.35, cutoff: 2500, drive: 5 }],
+            ["Leads", "Hoover Lead", "Hoover Lead", { crush: 10 }],
+            ["Leads", "Memphis Square", "Square Lead", { crush: 8, vib: 0.2, cutoff: 2200 }],
+            ["Leads", "Memphis Brass", "Brass Lead", { drive: 3, crush: 9 }],
+            ["Leads", "Drift Whistle", "Whistle Lead", { crush: 9, verb: 0.3 }],
+            ["Plucks", "Cowbell Pluck Hi", "Bell Pluck", { ratio: 1.48, index: 3.2, drive: 6, decay: 0.25 }],
+            ["Plucks", "Drift Pluck", "Dark Pluck", { drive: 3, crush: 9, echo: 0.4, echoTime: 0.18 }],
+            ["Plucks", "Music Box Pluck", "Mallet Pluck", { crush: 9, verb: 0.35 }],
+            ["Plucks", "Funk Square Pluck", "Square Pluck", { drive: 2, decay: 0.2 }],
+            ["Synths", "Drift Chords", "Poly Synth", { cutoff: 1300, crush: 9, chorus: 0.5 }],
+            ["Synths", "Cowbell Chords", "FM Synth", { ratio: 1.48, index: 2, crush: 9 }],
+            ["Synths", "Hoover Synth", "Hyper Synth", { drive: 5, crush: 9 }],
+            ["Synths", "Dark Choir", "Vowel Synth", { seq: ["o", "u"], crush: 9, verb: 0.35 }],
+            ["Bass", "808 Drift Slide", "808 Slide", { drive: 6 }],
+            ["Bass", "808 Gritty", "808 Distorted", { drive: 16, crush: 10 }],
+        ];
+        const addMore = (base, prefix, list, seedName, extraMods) => {
+            const counts = {};
+            for (const item of flCatalog) {
+                const m = item.path.startsWith(base + "/") && /^([^/]+)\//.exec(item.path.slice(base.length + 1));
+                if (m) counts[m[1]] = (counts[m[1]] || 0) + 1;
+            }
+            list.forEach(([folder, shown, name, mods], i) => {
+                const isBass = folder == "Bass";
+                const root = isBass ? 36 : folder == "Leads" ? 72 : 60;
+                // (extraMods add to the sound's own amounts: more drive, not the same drive)
+                const changes = Object.assign({}, mods);
+                for (const k in extraMods || {}) changes[k] = (typeof changes[k] == "number" ? changes[k] : 0) + extraMods[k];
+                const [gen, params, extra] = recipe(name, changes, hz(root));
+                const number = counts[folder] = (counts[folder] || 0) + 1;
+                flAdd(base + "/" + folder + "/" + prefix + " " + shown + " " + pad2(number), gen, jitter(params, "lib4/more/" + seedName + "/" + i, 0.03), Object.assign({ rootKey: root }, extra || {}));
+            });
+        };
+        addMore(PK + "/Phonk", "Phonk", PHONK_MORE, "Phonk");
+        addMore(PK + "/Brazilian Phonk", "Brazilian Phonk", PHONK_MORE, "Brazilian Phonk", { drive: 4 });
         // ------------------------------------------------- Essentials
         // Each sound type: archetypes x treatments = 75 named sounds.
         const ESS = PK + "/Essentials";

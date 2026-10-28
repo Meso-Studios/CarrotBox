@@ -295,6 +295,26 @@ function check(label, ok, detail) {
 	});
 	check("every genre folder has plucks, leads and synths; Essentials has 75 of every sound type", lib4.genreFolders >= 69 && lib4.thin.length == 0 && lib4.essentialTypes >= 29 && lib4.small.length == 0 && lib4.bad.length == 0, JSON.stringify(lib4));
 
+	// ---- every effect of the shared FX rack (Mangler, Synth Vault, Overtone, Nebula...) on an impulse,
+	// a saw and silence: finite, not blowing up, and silence stays (nearly) silent
+	const fxAll = await page.evaluate(() => {
+		const { CarrotFX } = beepbox.CarrotAPI;
+		const sr = 44100, bad = [];
+		for (const type of CarrotFX.typeOrder) {
+			for (const sig of ["impulse", "saw", "silence"]) {
+				const n = sr * 2, L = new Float32Array(n), R = new Float32Array(n);
+				if (sig == "impulse") L[100] = R[100] = 1;
+				if (sig == "saw") for (let i = 0; i < sr; i++) L[i] = R[i] = 0.5 * (((i * 110 / sr) % 1) * 2 - 1);
+				CarrotFX.renderChain([CarrotFX.defaults(type)], L, R, sr, 120);
+				let peak = 0, nan = 0;
+				for (let i = 0; i < n; i++) { const v = Math.max(Math.abs(L[i]), Math.abs(R[i])); if (!Number.isFinite(v)) nan++; else peak = Math.max(peak, v); }
+				if (nan || peak > 2 || (sig == "silence" && peak > 0.2) || (sig == "saw" && peak < 0.05)) bad.push(type + "/" + sig + ":" + peak.toFixed(2));
+			}
+		}
+		return { types: CarrotFX.typeOrder.length, bad };
+	});
+	check("every effect renders finite, bounded sound", fxAll.types >= 26 && fxAll.bad.length == 0, JSON.stringify(fxAll));
+
 	// ---- FL Studio interface mode turns on and off cleanly
 	const fl = await page.evaluate(async () => {
 		const before = editor.doc.prefs.colorTheme;

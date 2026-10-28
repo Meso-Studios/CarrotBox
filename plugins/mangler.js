@@ -1,8 +1,9 @@
 /*
  * Mangler FX - a creative multi-effect rack for CarrotBox.
  *
- * Chain up to 8 effects (distortion, bitcrusher, filter sweeps, chorus,
- * phaser, flanger, delay, reverb, glitch repeats, tape stop...), bind four
+ * Chain up to 8 effects (distortion, tape saturation, bitcrusher, filter
+ * sweeps, chorus, ensemble, phaser, flanger, delay, tape echo, reverb, plate,
+ * sidechain pump, transient shaper, glitch repeats, tape stop...), bind four
  * macro knobs to any parameter in the chain and start from a bank of
  * presets. Works as an instrument effect or on the master bus.
  */
@@ -132,6 +133,33 @@
         { group: "Space", name: "Jet Flange", params: make(
             [fx("flanger", { rate: 0.12, depth: 0.9, feedback: 0.7, mix: 0.7 }), fx("phaser", { rate: 0.2, depth: 0.6, feedback: 0.5, mix: 0.4 }), fx("delay", { time: 9, feedback: 0.35, mix: 0.2 })],
             [macro("Flange", [{ slot: 0, key: "feedback", amount: 0.25 }]), macro("Phase", [{ slot: 1, key: "mix", amount: 0.5 }]), macro("Echo", [{ slot: 2, key: "mix", amount: 0.4 }]), macro("Macro 4")]) },
+        { group: "Space", name: "Bright Plate", params: make(
+            [fx("plate", { size: 0.55, decay: 0.7, damp: 0.25, predelay: 20, mix: 0.35 }), fx("eq3", { low: -3, high: 1.5 })],
+            [macro("Size", [{ slot: 0, key: "size", amount: 0.4 }, { slot: 0, key: "decay", amount: 0.2 }]), macro("Dark", [{ slot: 0, key: "damp", amount: 0.6 }]), macro("Wet", [{ slot: 0, key: "mix", amount: 0.5 }]), macro("Macro 4")]) },
+        { group: "Space", name: "Tape Echo Dub", params: make(
+            [fx("tapeecho", { time: 8, feedback: 0.7, tone: 2400, lowcut: 250, drive: 0.5, wow: 0.4, mix: 0.45 }), fx("plate", { decay: 0.55, mix: 0.2 })],
+            [macro("Repeats", [{ slot: 0, key: "feedback", amount: 0.3 }]), macro("Wobble", [{ slot: 0, key: "wow", amount: 0.6 }]), macro("Grit", [{ slot: 0, key: "drive", amount: 0.5 }]), macro("Space", [{ slot: 1, key: "mix", amount: 0.4 }])]) },
+        { group: "Space", name: "Ensemble Wash", params: make(
+            [fx("ensemble", { rate: 0.5, depth: 0.7, mix: 0.6 }), fx("plate", { size: 0.8, decay: 0.8, mix: 0.3 })],
+            [macro("Thick", [{ slot: 0, key: "depth", amount: 0.3 }, { slot: 0, key: "mix", amount: 0.4 }]), macro("Space", [{ slot: 1, key: "mix", amount: 0.5 }]), macro("Tail", [{ slot: 1, key: "decay", amount: 0.17 }]), macro("Macro 4")]) },
+        { group: "Phonk", name: "Cowbell Grit", params: make(
+            [fx("distortion", { mode: 2, drive: 18, tone: 7000, mix: 0.7 }), fx("tape", { drive: 9, warmth: 0.6, tone: 9000, wow: 0.1 }), fx("plate", { size: 0.35, decay: 0.45, mix: 0.18 })],
+            [macro("Drive", [{ slot: 0, key: "drive", amount: 0.4 }]), macro("Tape", [{ slot: 1, key: "drive", amount: 0.4 }]), macro("Room", [{ slot: 2, key: "mix", amount: 0.4 }]), macro("Macro 4")]) },
+        { group: "Phonk", name: "Memphis Tape", params: make(
+            [fx("tape", { drive: 10, warmth: 0.8, tone: 6000, wow: 0.5, flutter: 0.4, hiss: 0.35 }), fx("lofi", { crackle: 0.35, hiss: 0.15, wow: 0.2, tone: 7000, mix: 0.6 }), fx("tapeecho", { time: 7, feedback: 0.35, tone: 2200, mix: 0.2 })],
+            [macro("Age", [{ slot: 0, key: "wow", amount: 0.5 }, { slot: 1, key: "crackle", amount: 0.5 }]), macro("Dark", [{ slot: 0, key: "tone", amount: -0.5 }]), macro("Echo", [{ slot: 2, key: "mix", amount: 0.5 }]), macro("Macro 4")]) },
+        { group: "Phonk", name: "Drift Pump", params: make(
+            [fx("pump", { rate: 9, depth: 0.75, release: 0.55, curve: 1.8 }), fx("tape", { drive: 7, warmth: 0.6 }), fx("plate", { size: 0.6, decay: 0.65, mix: 0.25 })],
+            [macro("Pump", [{ slot: 0, key: "depth", amount: 0.25 }]), macro("Recover", [{ slot: 0, key: "release", amount: -0.4 }]), macro("Space", [{ slot: 2, key: "mix", amount: 0.4 }]), macro("Macro 4")]) },
+        { group: "Phonk", name: "808 Smash", params: make(
+            [fx("transient", { attack: 0.5, sustain: 0.2 }), fx("distortion", { mode: 0, drive: 16, tone: 5000, mix: 0.6 }), fx("tape", { drive: 6, warmth: 0.9, tone: 8000, wow: 0, flutter: 0, hiss: 0 })],
+            [macro("Punch", [{ slot: 0, key: "attack", amount: 0.5 }]), macro("Dirt", [{ slot: 1, key: "drive", amount: 0.4 }]), macro("Body", [{ slot: 2, key: "warmth", amount: 0.1 }]), macro("Macro 4")]) },
+        { group: "Mix", name: "Punch & Glue", params: make(
+            [fx("transient", { attack: 0.35, sustain: -0.1 }), fx("compressor", { threshold: -20, ratio: 3, attack: 10, release: 150, makeup: 3 }), fx("tape", { drive: 3, warmth: 0.4, wow: 0, flutter: 0, hiss: 0 })],
+            [macro("Punch", [{ slot: 0, key: "attack", amount: 0.5 }]), macro("Squeeze", [{ slot: 1, key: "threshold", amount: -0.3 }]), macro("Warm", [{ slot: 2, key: "drive", amount: 0.3 }]), macro("Macro 4")]) },
+        { group: "Mix", name: "Four on the Floor Duck", params: make(
+            [fx("pump", { rate: 9, depth: 0.85, release: 0.45, curve: 2.2 }), fx("eq3", { low: -2 })],
+            [macro("Depth", [{ slot: 0, key: "depth", amount: 0.15 }]), macro("Release", [{ slot: 0, key: "release", amount: 0.5 }]), macro("Macro 3"), macro("Macro 4")]) },
     ];
 
     // ------------------------------------------------------------------- DSP
