@@ -11,16 +11,21 @@
  *   3. Notes: per-frame sparse NMF with harmonic templates (four timbre shapes per
  *      pitch, tuned to the recording) explains each spectrum as a set of notes.
  *      Notes are tracked with adaptive hysteresis, re-attacks are split, onsets
- *      are refined with a short window, harmonic ghosts are removed, and glides,
- *      vibrato bends and velocities are measured. Real polyphony: every note keeps
- *      its own start and length.
+ *      are refined with a short window, harmonic ghosts are removed (an overtone
+ *      starts with its note and never outlasts it), and velocities are measured.
+ *      Bends are written only where the pitch is heard sliding and the spectrum
+ *      agrees (808 slides); a pitch change with a new attack is a new note. Real
+ *      polyphony: every note keeps its own start and length.
  *   4. Drums: partially fixed NMF on 48 log bands with eleven drum templates
  *      (made from CarrotBox's own drum sounds) plus free templates that soak up
  *      everything else. The templates then adapt to the recording's kit and the
  *      hits are re-detected: kick, snare, clap, closed and open hat, three toms,
  *      crash, ride and rim.
- *   5. Roles: bass (the lowest line), lead (the top line that moves on its own),
- *      harmony (everything else), key and chord names.
+ *   5. Roles: bass (the lowest line; a new attack ends the note before it), lead
+ *      (the melody line, followed by onset so a note's release does not demote it),
+ *      harmony (everything else), key and chord names (plain triads unless the
+ *      notes clearly say otherwise). The arrangement gives chord strikes their
+ *      missing tones where the recording has them and holds them to the next strike.
  * Writing: each part goes to its own channel with matched sounds (the drum kit is
  * built from the library sounds closest to the recording's drums), timing follows
  * the beat map (exact or quantized), and the original goes on a muted track.
@@ -626,6 +631,25 @@
 					}
 				}
 			}
+			// ...and the strongest note near in pitch: a kick's low ring or a loud bass line does not
+			// mask a chord two octaves up (masking is local in frequency)
+			const span = opts.contextSpan != undefined ? opts.contextSpan : 15;
+			let localP = null;
+			if (span > 0) {
+				localP = new Float32Array(frames * NP);
+				const near = new Float32Array(frames);
+				const dq = new Int32Array(frames + 1);
+				for (let p = 0; p < NP; p++) {
+					const q0 = Math.max(0, p - span), q1 = Math.min(NP - 1, p + span);
+					for (let f = 0; f < frames; f++) { let m = 0; for (let q = q0; q <= q1; q++) m = Math.max(m, S[f * NP + q]); near[f] = m; }
+					let head = 0, tail = 0;
+					for (let i = 0; i < frames + W; i++) {
+						if (i < frames) { while (tail > head && near[dq[tail - 1]] <= near[i]) tail--; dq[tail++] = i; }
+						const c = i - W;
+						if (c >= 0) { while (dq[head] < c - W) head++; localP[c * NP + p] = near[dq[head]]; }
+					}
+				}
+			}
 			const gmax = percentile(frameMax, 0.98) || 1;
 			const rhoOn = 0.2 - 0.13 * sens, rhoOff = rhoOn * 0.5;
 			const floor = gmax * (0.035 - 0.025 * sens);
@@ -639,7 +663,8 @@
 				};
 				for (let f = 0; f < frames; f++) {
 					const v = S[f * NP + p];
-					const thrOn = Math.max(floor, rhoOn * local[f]), thrOff = Math.max(floor * 0.6, rhoOff * local[f]);
+					const ctx = localP ? localP[f * NP + p] : local[f];
+					const thrOn = Math.max(floor, rhoOn * ctx), thrOff = Math.max(floor * 0.6, rhoOff * ctx);
 					if (on < 0) {
 						if (v > thrOn && (S[Math.min(frames - 1, f + 1) * NP + p] > thrOn || v > 2 * thrOn)) { on = f; below = 0; peak = v; }
 					}
@@ -726,7 +751,8 @@
 				out.push({ p: n.p, f0, f1, peak, onset: best, bright: cnt ? br / cnt : 0, pure: cnt ? pu / cnt : 0, sustain: peak > 0 ? late / peak : 0 });
 			}
 			out.sort((a, b) => a.f0 - b.f0 || a.p - b.p);
-			verifyHarmonics(V, out, tuning / 100 * BPS);
+			verifyHarmonics(V, out, tuning / 100 * BPS, opts.subOct != undefined ? opts.subOct : 0.5);
+			if (opts.lowOct !== 0) fixLowOctaves(V, out, tuning / 100 * BPS, opts.lowOct || 0.8);
 			// remove harmonic ghosts: a weak note sitting on a strong note's overtone (or an octave below it)
 			const overlap = (a, b) => Math.max(0, Math.min(a.f1, b.f1) - Math.max(a.f0, b.f0));
 			for (const n of out) {
@@ -761,7 +787,7 @@
 			const row = f * NB;
 			return Math.max(V[row + b - 1], V[row + b], V[row + b + 1]);
 		}
-		function verifyHarmonics(V, notes, shift) {
+		function verifyHarmonics(V, notes, shift, subOct = 0.15) {
 			const ov = (a, b) => Math.max(0, Math.min(a.f1, b.f1) - Math.max(a.f0, b.f0));
 			const middle = (n) => [n.f0 + Math.round((n.f1 - n.f0) * 0.15), Math.max(n.f0 + Math.round((n.f1 - n.f0) * 0.15) + 1, n.f1 - Math.round((n.f1 - n.f0) * 0.15))];
 			for (const n of notes) {
@@ -799,28 +825,146 @@
 					for (const k of [1, 3, 5]) own += partialAmp(V, f, n.p, k, shift);
 					for (const k of [2, 4, 6]) shared += partialAmp(V, f, n.p, k, shift);
 				}
-				if (shared > 0 && own / shared < 0.15) n.dead = true;
+				if (shared > 0 && own / shared < subOct) n.dead = true;
 			}
 		}
-		// Fine pitch of a note over time (semitones relative to its pitch), from the
-		// reassigned spectrum around its fundamental (or 2nd harmonic for low notes).
-		function pitchCurve(V, n) {
-			const curve = [];
-			const harmonic = n.p < 45 ? 2 : 1;
-			const center = (hzMidi(midiHz(n.p) * harmonic) - M0) * BPS;
-			for (let f = n.f0 + 1; f < n.f1; f += 2) {
-				const row = f * NB;
-				let best = -1, bv = 0;
-				for (let b = Math.max(1, Math.round(center - 8 * BPS)); b <= Math.min(NB - 2, Math.round(center + 8 * BPS)); b++) {
-					const v = V[row + b];
-					if (v > bv && v >= V[row + b - 1] && v >= V[row + b + 1]) { bv = v; best = b; }
+		// A low note heard an octave too high: a sub bass or an 808 is mostly its fundamental, and
+		// when that is weak in the analysis the second harmonic wins. If the spectrum has a clear
+		// partial at half the frequency (and at one and a half times, the lower note's third), and
+		// no other note explains them, the note is an octave lower.
+		function fixLowOctaves(V, notes, shift, ratio) {
+			const ov = (a, b) => Math.max(0, Math.min(a.f1, b.f1) - Math.max(a.f0, b.f0));
+			for (const n of notes) {
+				if (n.dead || n.p > 62 || n.p - 12 < P0) continue;
+				if (notes.some(m => m != n && !m.dead && (m.p == n.p - 12 || m.p == n.p - 19 || m.p == n.p - 24) && ov(m, n) > 0.3 * (n.f1 - n.f0))) continue;
+				const a = n.f0 + Math.round((n.f1 - n.f0) * 0.1), b = Math.max(a + 1, n.f1 - Math.round((n.f1 - n.f0) * 0.2));
+				let half = 0, one = 0, oneHalf = 0, between = 0;
+				for (let f = a; f < b; f++) {
+					half += partialAmp(V, f, n.p - 12, 1, shift);
+					oneHalf += partialAmp(V, f, n.p - 12, 3, shift);
+					one += partialAmp(V, f, n.p, 1, shift);
+					// a level between the partials: is the half-frequency partial a peak of its own?
+					between += partialAmp(V, f, n.p - 12 + 5, 1, shift);
 				}
-				if (best < 0) { curve.push(null); continue; }
-				const a = V[row + best - 1], c = V[row + best + 1], d = a - 2 * bv + c;
-				const pos = best + (d < 0 ? 0.5 * (a - c) / d : 0);
+				if (one > 0 && half > ratio * one && half > 3 * between && oneHalf > 0.1 * one) { n.p -= 12; n.octFix = true; }
+			}
+		}
+		// Fine pitch of a note over time (semitones relative to its pitch, one value per frame, null
+		// where it cannot be heard), from the reassigned spectrum. It follows one partial: the
+		// strongest of the first four that no other note shares, and each frame looks for the peak
+		// closest to where the partial was a frame before (a glide moves it, the partials of other
+		// notes do not pull it away).
+		function pitchCurve(V, n, shift, others = []) {
+			const frames = V.length / NB;
+			const f0 = n.f0, f1 = Math.min(frames, n.f1);
+			if (f1 - f0 < 3) return [];
+			const clashes = (pos) => others.some(o => { for (let k = 1; k <= 8; k++) { const d = Math.abs((hzMidi(midiHz(o.p) * k) - M0) * BPS + shift - pos); if (d < 1.6) return true; } return false; });
+			let best = null;
+			for (let h = 1; h <= 4; h++) {
+				if (midiHz(n.p) * h > 3200) break;
+				const pos = (hzMidi(midiHz(n.p) * h) - M0) * BPS + shift;
+				if (pos < 2 || pos > NB - 3 || clashes(pos)) continue;
+				let a = 0;
+				for (let f = f0 + Math.floor((f1 - f0) * 0.2); f < f0 + Math.ceil((f1 - f0) * 0.6); f++) a += partialAmp(V, f, n.p, h, shift);
+				if (!best || a > best.a * (h == 1 ? 0.8 : 1)) best = { h, pos, a };
+			}
+			if (!best || !(best.a > 0)) return [];
+			const center = best.pos, R = 2 * BPS;
+			let cur = center, ref = 0;
+			const curve = [];
+			for (let f = f0; f < f1; f++) {
+				const row = f * NB;
+				let bi = -1, bs = 0;
+				for (let b = Math.max(1, Math.round(cur - R)); b <= Math.min(NB - 2, Math.round(cur + R)); b++) {
+					const v = V[row + b];
+					if (!(v > 0) || v < V[row + b - 1] || v < V[row + b + 1]) continue;
+					const s = v * Math.exp(-0.5 * Math.pow((b - cur) / BPS, 2)) * Math.exp(-0.5 * Math.pow((b - center) / (5 * BPS), 2));
+					if (s > bs) { bs = s; bi = b; }
+				}
+				const v = bi >= 0 ? V[row + bi] : 0;
+				if (bi < 0 || v < 0.2 * ref) { curve.push(null); continue; }
+				ref = Math.max(ref * 0.97, v);
+				const a = V[row + bi - 1], c = V[row + bi + 1], d = a - 2 * v + c;
+				const pos = bi + (d < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / d)) : 0);
+				cur = pos;
 				curve.push((pos - center) / BPS);
 			}
 			return curve;
+		}
+		// Bends a musician would write, from a pitch curve: the pitch moves to another semitone and
+		// stays there (an 808 slide, a guitar bend, a sung scoop that lands). Vibrato, a short scoop
+		// into the note and a curve that loses its partial are not bends. [[fraction of the note where
+		// the new pitch is reached, semitones], ...] or null.
+		function bendsFrom(curve, dur) {
+			const n = curve.length;
+			if (n < 8) return null;
+			let known = 0;
+			for (const c of curve) if (c != null) known++;
+			if (known < 0.6 * n) return null;
+			// median of five (one stray frame does not move it)
+			const sm = curve.map((_, i) => {
+				const w = [];
+				for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) if (curve[j] != null) w.push(curve[j]);
+				if (w.length < 3) return null;
+				w.sort((a, b) => a - b);
+				return w[w.length >> 1];
+			});
+			// steady stretches: frames that sit close to one semitone
+			const segs = [];
+			for (let i = 0; i < n; i++) {
+				const c = sm[i];
+				const r = c == null ? null : Math.round(c);
+				const steady = c != null && Math.abs(c - r) < 0.35 && Math.abs(r) <= 12;
+				const last = segs[segs.length - 1];
+				if (steady && last && last.r == r && i - last.end <= 2) { last.end = i; continue; }
+				if (steady) segs.push({ r, start: i, end: i });
+			}
+			const minLen = Math.max(4, Math.round(0.07 * FPS));
+			const long = segs.filter(s => s.end - s.start + 1 >= minLen);
+			if (!long.length) return null;
+			// the note's own pitch must hold for most of it, or the curve is not to be trusted
+			let home = 0, all = 0;
+			for (const s of long) { all += s.end - s.start + 1; if (s.r == 0) home += s.end - s.start + 1; }
+			if (home < 0.3 * all || long[0].r != 0 && long[0].start > 0.25 * n) return null;
+			const bends = [];
+			let at = 0, prevSeg = null;
+			// a real slide passes through the pitches in between; a jump straight to another semitone is
+			// the curve hopping to another partial (or another note)
+			const glides = (a, b) => {
+				const lo = Math.min(a.r, b.r) + 0.4, hi = Math.max(a.r, b.r) - 0.4;
+				let mid = 0;
+				for (let i = Math.max(0, a.end - 1); i <= Math.min(n - 1, b.start + 1); i++) if (curve[i] != null && curve[i] > lo && curve[i] < hi) mid++;
+				const d = Math.abs(a.r - b.r);
+				return d == 1 ? true : mid >= (d == 7 || d == 12 || d == 5 ? 2 : 1);
+			};
+			for (const s of long) {
+				if (s.r == at) { prevSeg = s; continue; }
+				const jump = prevSeg && !glides(prevSeg, s);
+				// a one-semitone wobble that comes back is vibrato or noise
+				if (Math.abs(s.r - at) == 1 && s.end - s.start + 1 < Math.round(0.14 * FPS) && long.some(o => o.start > s.end && o.r == at)) continue;
+				prevSeg = s;
+				if (jump) {
+					// (the caller splits the note there if a new note starts, and drops the rest otherwise)
+					const frac = s.start / Math.max(1, dur * FPS);
+					if (frac > 0.92) break;
+					bends.push([+frac.toFixed(3), s.r, 1]);
+					at = s.r;
+					continue;
+				}
+				// a scoop into the note: it starts off pitch and lands on it
+				if (!bends.length && at == 0 && s.r != 0 && s.start < Math.round(0.06 * FPS) && long.some(o => o.start > s.end && o.r == 0)) continue;
+				const frac = s.start / Math.max(1, dur * FPS);
+				if (frac > 0.92) break;
+				bends.push([+frac.toFixed(3), s.r]);
+				at = s.r;
+			}
+			// a bend that only lasts to the very end of the note is its release falling away
+			if (bends.length && bends[bends.length - 1][1] != 0) {
+				const lastSeg = long[long.length - 1];
+				if (lastSeg.r != 0 && (lastSeg.end - lastSeg.start + 1) < 0.15 * n && lastSeg.start > 0.8 * n) bends.pop();
+			}
+			if (!bends.length || bends.length > 5) return null;
+			return bends;
 		}
 
 		// ---------------------------------------------------------------- instruments learned from the recording
@@ -1418,19 +1562,31 @@
 			const tOf = (n) => n.t;
 			const end = (n) => n.t + n.dur;
 			const sorted = notes.slice().sort((a, b) => a.t - b.t);
+			// in the bass register a new attack ends the note before it (a bass is one voice: the old
+			// note's ring, or its octave heard in the new one, is not the bass any more)
+			const lowEnd = new Map();
+			for (let i = 0; i < sorted.length; i++) {
+				const n = sorted[i];
+				if (n.midi > 57) continue;
+				let e = end(n);
+				for (let j = i + 1; j < sorted.length && sorted[j].t < e; j++) { const m = sorted[j]; if (m.midi <= 57 && m.t > n.t + 0.06 && m.midi != n.midi && (m.onset == undefined || m.onset > 0.15)) { e = m.t; break; } }
+				lowEnd.set(n, e);
+			}
 			// lowest / highest sounding note over time, sampled every 20 ms
 			const duration = notes.reduce((m, n) => Math.max(m, end(n)), 0);
 			const steps = Math.ceil(duration / 0.02) + 1;
 			const low = new Int32Array(steps).fill(-1), high = new Int32Array(steps).fill(-1);
 			sorted.forEach((n, i) => {
+				const le = lowEnd.has(n) ? lowEnd.get(n) : end(n);
 				for (let s = Math.floor(n.t / 0.02); s < Math.ceil(end(n) / 0.02) && s < steps; s++) {
-					if (low[s] < 0 || n.midi < sorted[low[s]].midi) low[s] = i;
+					if (s * 0.02 < le && (low[s] < 0 || n.midi < sorted[low[s]].midi)) low[s] = i;
 					if (high[s] < 0 || n.midi > sorted[high[s]].midi) high[s] = i;
 				}
 			});
 			const frac = (arr, i, n) => {
 				let yes = 0, all = 0;
-				for (let s = Math.floor(n.t / 0.02); s < Math.ceil(end(n) / 0.02) && s < steps; s++) { all++; if (arr[s] == i) yes++; }
+				const e = arr == low && lowEnd.has(n) ? lowEnd.get(n) : end(n);
+				for (let s = Math.floor(n.t / 0.02); s < Math.ceil(e / 0.02) && s < steps; s++) { all++; if (arr[s] == i) yes++; }
 				return all ? yes / all : 0;
 			};
 			sorted.forEach((n, i) => { n._low = frac(low, i, n); n._high = frac(high, i, n); });
@@ -1441,25 +1597,52 @@
 			}
 			// bass: the lowest note (and low enough)
 			for (const n of sorted) if (n.midi <= 57 && n._low >= 0.6) n.role = "bass";
-			// lead: the top voice that moves on its own (or stands clearly above the chord)
+			// lead: the top line that moves on its own. Notes are taken by onset: a note struck on its
+			// own up top is the melody; of notes struck together (a chord), the top one is the melody
+			// only when it stands clearly above the rest or carries on the melody line. A melody note's
+			// release overlapping the next one (synth release, reverb) does not make it harmony.
 			const medVel = sorted.length ? sorted.map(n => n.vel).sort((a, b) => a - b)[sorted.length >> 1] : 0;
-			for (const n of sorted) {
-				if (n.role || n.midi < 55) continue;
-				const alone = n._together <= 1;
-				if (n._high >= 0.7 && (alone || n._gapAbove >= 3 || n.vel >= 1.2 * medVel)) n.role = "lead";
+			const upper = sorted.filter(n => !n.role && n.midi >= 52);
+			const clusters = [];
+			for (const n of upper) {
+				const c = clusters[clusters.length - 1];
+				if (c && n.t - c[0].t < 0.04) c.push(n); else clusters.push([n]);
 			}
-			// one note at a time in the bass and the lead: overlapping ones become harmony
+			const recent = [];
+			const lineNear = (m) => { if (recent.length < 2) return false; const v = recent.slice(-5).sort((a, b) => a - b); return Math.abs(m - v[v.length >> 1]) <= 7; };
+			for (const c of clusters) {
+				c.sort((a, b) => b.midi - a.midi);
+				const top = c[0];
+				if (top.midi < 55) continue;
+				let lead = false;
+				if (c.length == 1) lead = top._high >= 0.35 || (top._gapAbove >= 3 && lineNear(top.midi));
+				else {
+					const gap = top.midi - c[1].midi;
+					lead = gap >= 5 || (gap >= 3 && (c.length >= 4 || lineNear(top.midi) || top.vel >= 1.2 * medVel));
+				}
+				if (lead) { top.role = "lead"; recent.push(top.midi); }
+			}
+			// a lone note inside a sounding chord (an inner voice) is harmony
+			for (const n of sorted) {
+				if (n.role != "lead" || n._together > 1) continue;
+				const holding = sorted.filter(o => o != n && o.role != "bass" && o.role != "lead" && o.t < n.t - 0.04 && o.t + o.dur > n.t + 0.6 * n.dur);
+				if (holding.length >= 2 && holding.some(o => o.midi > n.midi) && n._high < 0.5 && !lineNear(n.midi)) n.role = null;
+			}
+			// one note at a time in the bass and the lead: a note ends where the next one starts, and
+			// of two struck together the outer one stays
 			for (const role of ["bass", "lead"]) {
 				const list = sorted.filter(n => n.role == role);
-				for (let i = 0; i < list.length; i++) {
-					for (let j = i + 1; j < list.length && list[j].t < end(list[i]); j++) {
-						const a = list[i], b = list[j];
-						if (a.role != role || b.role != role) continue;
-						const ov = Math.min(end(a), end(b)) - Math.max(a.t, b.t);
-						if (ov <= 0.05) { if (end(a) > b.t) a.dur = Math.max(0.03, b.t - a.t); continue; }
-						const loser = role == "bass" ? (a.midi > b.midi ? a : b) : (a.midi < b.midi ? a : b);
-						loser.role = null;
-					}
+				for (let i = 0; i + 1 < list.length; i++) {
+					const a = list[i];
+					if (a.role != role) continue;
+					let j = i + 1;
+					while (j < list.length && list[j].role != role) j++;
+					if (j >= list.length) break;
+					const b = list[j];
+					if (end(a) <= b.t) continue;
+					if (b.t - a.t >= 0.06) { a.dur = Math.max(0.03, b.t - a.t); continue; }
+					const loser = role == "bass" ? (a.midi > b.midi ? a : b) : (a.midi < b.midi ? a : b);
+					loser.role = null;
 				}
 			}
 			for (const n of sorted) {
@@ -1469,7 +1652,7 @@
 			return sorted;
 		}
 		// The precision filter (0 keeps everything, 1 is strict).
-		function cleanNotes(list, key, p) {
+		function cleanNotes(list, key, p, dropped) {
 			if (!(p > 0) || !list.length) return list;
 			const scale = new Set((key.minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]).map(v => (v + key.key) % 12));
 			const ov = (a, b) => Math.max(0, Math.min(a.t + a.dur, b.t + b.dur) - Math.max(a.t, b.t));
@@ -1485,14 +1668,16 @@
 				if (n.dur < 0.04 + 0.1 * p && n.vel < 0.25 + 0.5 * p * velMed) { n.drop = "blip"; continue; }
 				// ghosts: an octave, twelfth or double octave above (or an octave below) a louder note it rides on
 				for (const m of others) {
-					const d = n.midi - m.midi, o = ov(n, m) / Math.min(n.dur, m.dur);
-					if (o < 0.5) continue;
+					// (an overtone lives inside its note: it starts with it and does not outlast it)
+					const d = n.midi - m.midi, o = ov(n, m) / n.dur;
+					if (o < 0.6 || Math.abs(n.t - m.t) > 0.08 || n.t + n.dur > m.t + m.dur + Math.max(0.15, 0.4 * m.dur)) continue;
 					if ((d == 12 && n.vel < (0.45 + 0.45 * p) * m.vel) || ((d == 19 || d == 24 || d == 28 || d == 31) && n.vel < (0.6 + 0.35 * p) * m.vel) || (d == -12 && n.vel < (0.25 + 0.4 * p) * m.vel && Math.abs(n.t - m.t) < 0.05)) { n.drop = "ghost"; break; }
 				}
 				if (n.drop) continue;
 				// background: a soft swell with no attack under the parts (pads, drones)
 				if (p >= 0.5 && (n.onset || 0) < 0.08 + 0.12 * p && n.dur > 0.6 && n.vel < velMed * (0.4 + 0.5 * p)) n.drop = "background";
 			}
+			if (dropped) for (const n of list) if (n.drop) dropped.push(Object.assign({}, n, { _n: undefined }));
 			let kept = list.filter(n => !n.drop);
 			// fragments of one held note (no new attack) become one note
 			kept.sort((a, b) => a.midi - b.midi || a.t - b.t);
@@ -1542,7 +1727,9 @@
 		}
 		const CHORD_TYPES = [["", [0, 4, 7]], ["m", [0, 3, 7]], ["7", [0, 4, 7, 10]], ["maj7", [0, 4, 7, 11]], ["m7", [0, 3, 7, 10]], ["sus4", [0, 5, 7]], ["sus2", [0, 2, 7]], ["dim", [0, 3, 6]], ["aug", [0, 4, 8]], ["6", [0, 4, 7, 9]], ["m6", [0, 3, 7, 9]]];
 		const NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-		function chordFor(notes, t0, t1) {
+		// what a chord type costs: plain triads are the usual answer, colours need clear evidence
+		const CHORD_COST = { "": 0, m: 0, "7": 0.05, maj7: 0.06, m7: 0.05, sus4: 0.08, sus2: 0.08, dim: 0.09, aug: 0.14, "6": 0.08, m6: 0.09 };
+		function chordFor(notes, t0, t1, key) {
 			const chroma = new Float64Array(12), bassPc = new Float64Array(12);
 			for (const n of notes) {
 				const ov = Math.min(n.t + n.dur, t1) - Math.max(n.t, t0);
@@ -1558,7 +1745,8 @@
 				let s = 0;
 				const set = new Set(tones.map(t => (root + t) % 12));
 				for (let pc = 0; pc < 12; pc++) s += set.has(pc) ? chroma[pc] : -0.6 * chroma[pc];
-				s = s / total - 0.04 * tones.length + 0.35 * bassPc[root] / total;
+				s = s / total - 0.04 * tones.length + 0.7 * bassPc[root] / total - (CHORD_COST[suffix] || 0);
+				if (key) { const sc = key.minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]; for (const t of tones) if (!sc.includes((root + t - key.key + 24) % 12)) s -= 0.03; }
 				if (s > bestScore) { bestScore = s; best = { root, type: suffix, name: NAMES[root] + suffix }; }
 			}
 			return best;
@@ -1623,9 +1811,21 @@
 			const drums = await detectDrums(spec.D, frames, O, Object.assign({}, opts, { _M1: spec.M1, _notes: tracked }), progress);
 			// low "notes" that start with a kick or tom and die away like one are the drum's own tone
 			const drumLow = drums.hits.filter(h => /kick|tom/.test(h.kind));
-			notes = notes.filter(n => {
+			// (a kick's ring is close to a pure sine; a bass note played with the kick has harmonics)
+			const sh0 = spec.tuning / 100 * BPS;
+			const pureTone = (n) => {
+				const src = n._n;
+				if (!src) return true;
+				let h1 = 0, h23 = 0;
+				for (let f = src.f0 + 2; f < Math.min(src.f1, src.f0 + Math.round(0.1 * FPS)); f++) {
+					h1 += partialAmp(spec.V, f, n.midi, 1, sh0);
+					h23 += partialAmp(spec.V, f, n.midi, 2, sh0) + partialAmp(spec.V, f, n.midi, 3, sh0);
+				}
+				return h1 <= 0 || h23 < 0.2 * h1;
+			};
+			if (opts.kickTail !== false) notes = notes.filter(n => {
 				if (n.midi >= 55 || !drumLow.some(h => Math.abs(h.t - n.t) < 0.05)) return true;
-				if (n.dur < 0.16) return false;
+				if (n.dur < 0.16 && (n.dur < 0.08 || pureTone(n))) return false;
 				const src = n._n, pi = n.midi - P0;
 				const at = (sec) => act.A[Math.min(frames - 1, src.f0 + Math.round(sec * FPS)) * NP + pi];
 				let peak = 0;
@@ -1635,9 +1835,20 @@
 			// A kick drum with a long tail rings at its own low pitch on every hit, under the bass
 			// line: a bass is one voice, so a low pitch that keeps sounding along with other bass
 			// notes and starts with the kicks is the drum.
-			{
+			if (opts.kickTail !== false) {
 				const kicks = drums.hits.filter(h => h.kind == "kick");
-				const nearKick = (n) => kicks.some(h => Math.abs(h.t - n.t) < 0.13);
+				// (an 808 starts with the kick too, but it keeps sounding: only a tone that dies away
+				// like a drum is the kick's)
+				const decays = (n) => {
+					const src = n._n, pi = n.midi - P0;
+					if (!src || n.dur < 0.12) return true;
+					let peak = 0;
+					for (let f = src.f0; f < Math.min(src.f1, src.f0 + Math.round(0.06 * FPS)); f++) peak = Math.max(peak, act.A[f * NP + pi]);
+					let later = 0;
+					for (let f = src.f0 + Math.round(0.14 * FPS); f < Math.min(src.f1, src.f0 + Math.round(0.2 * FPS)); f++) later = Math.max(later, act.A[f * NP + pi]);
+					return later < 0.45 * peak;
+				};
+				const nearKick = (n) => kicks.some(h => Math.abs(h.t - n.t) < 0.13) && decays(n);
 				const under = (n) => notes.some(m => m != n && m.midi > n.midi + 2 && m.midi <= 55 && Math.min(m.t + m.dur, n.t + n.dur) - Math.max(m.t, n.t) > 0.5 * n.dur);
 				const votes = new Map(), total = new Map();
 				for (const n of notes) {
@@ -1653,13 +1864,30 @@
 			progress(0.95, "Finding the parts, the key and the chords");
 			notes = assignRoles(notes);
 			// a bass note that glides into the next one without a new attack is one note with a bend
+			// (the pitch must be heard passing through the notes in between: a slide, not a jump)
+			const slides = (a, b, from = a.midi) => {
+				if (!a._n || !b._n) return false;
+				const d = b.midi - from, ad = Math.abs(d);
+				if (ad == 1) return (b.onset || 0) < 0.08;
+				const span = { p: from, f0: Math.max(a._n.f0, b._n.f0 - Math.round(0.15 * FPS)), f1: Math.min(b._n.f1, b._n.f0 + Math.round(0.1 * FPS)) };
+				const curve = pitchCurve(spec.V, span, spec.tuning / 100 * BPS, []);
+				let mid = 0, known = 0;
+				for (const c of curve) {
+					if (c == null) continue;
+					known++;
+					if ((d > 0 ? c > 0.5 && c < d - 0.5 : c < -0.5 && c > d + 0.5)) mid++;
+				}
+				return known >= 0.6 * curve.length && mid >= (ad == 2 ? 1 : ad >= 7 ? 3 : 2);
+			};
 			{
 				const bass = notes.filter(n => n.role == "bass").sort((a, b) => a.t - b.t);
 				for (let i = 0; i + 1 < bass.length; i++) {
 					const a = bass[i], b = bass[i + 1];
 					if (a.dead) continue;
 					const gap = b.t - (a.t + a.dur);
-					if (gap < 0.045 && gap > -0.06 && Math.abs(b.midi - a.midi) <= 12 && b.midi != a.midi && (b.onset || 0) < 0.25) {
+					// (after a slide, the note is where the slide ended)
+					const now = a.midi + (a.bend && a.bend.length ? a.bend[a.bend.length - 1][1] : 0);
+					if (gap < 0.045 && gap > -0.06 && Math.abs(b.midi - now) <= 12 && Math.abs(b.midi - a.midi) <= 12 && b.midi != now && (a.bend || []).length < 4 && (b.onset || 0) < 0.25 && slides(a, b, now)) {
 						const total = b.t + b.dur - a.t;
 						const bends = (a.bend || []).map(([fr, semi]) => [fr * a.dur / total, semi]);
 						bends.push([(b.t - a.t) / total, b.midi - a.midi]);
@@ -1676,20 +1904,69 @@
 				if (n.bend) { delete n._n; continue; }
 				const src = n._n;
 				delete n._n;
-				if ((n.role == "bass" || n.role == "lead") && n.dur > 0.12) {
-					const curve = pitchCurve(spec.V, src);
-					const bends = [];
-					let lastSemi = 0;
-					curve.forEach((c, i) => {
-						if (c == null) return;
-						const semi = Math.round(c);
-						if (semi != lastSemi && Math.abs(c - lastSemi) > 0.7 && Math.abs(semi) <= 12) {
-							bends.push([+((i * 2 + 1) / FPS / n.dur).toFixed(3), semi]);
-							lastSemi = semi;
+				if ((n.role == "bass" || n.role == "lead") && n.dur > 0.15 && src) {
+					const others = tracked.filter(o => o != src && o.f0 < src.f1 && o.f1 > src.f0);
+					let bends = bendsFrom(pitchCurve(spec.V, src, spec.tuning / 100 * BPS, others), n.dur);
+					// the spectrum must agree: before a bend the old pitch rings and the new one does not,
+					// after it the other way round (a curve that drifted onto another partial fails this)
+					if (bends) {
+						const sh = spec.tuning / 100 * BPS;
+						const level = (p, a, b) => { let v = 0; for (let f = Math.max(0, a); f < Math.min(frames, b); f++) for (let h = 1; h <= 3; h++) v += partialAmp(spec.V, f, p, h, sh); return v; };
+						const fr = (x) => Math.round(src.f0 + x * n.dur * FPS);
+						const ok = [];
+						let prevF = src.f0, prevSemi = 0;
+						for (let i = 0; i < bends.length; i++) {
+							const [x, semi, jump] = bends[i];
+							const f = fr(x), nextF = i + 1 < bends.length ? fr(bends[i + 1][0]) : src.f1;
+							if (!jump) {
+								const oldP = n.midi + prevSemi, newP = n.midi + semi;
+								const pad = Math.round(0.03 * FPS);
+								const bOld = level(oldP, prevF + pad, f - pad), bNew = level(newP, prevF + pad, f - pad);
+								const aOld = level(oldP, f + pad, nextF - pad), aNew = level(newP, f + pad, nextF - pad);
+								// per frame: the old pitch stops, the new one takes over at about the same level
+								// (one voice moving), rather than another note coming in over it
+								const nb = Math.max(1, f - prevF - 2 * pad), na = Math.max(1, nextF - f - 2 * pad);
+								const bo = bOld / nb, ao = aOld / na, an = aNew / na;
+								if (!(aNew > 1.5 * aOld && bOld > 1.5 * bNew && ao < 0.4 * bo && an > 0.4 * bo && an < 2.5 * bo)) break;
+							}
+							ok.push(bends[i]);
+							prevF = f; prevSemi = semi;
 						}
-					});
-					if (bends.length && bends.length <= 6) n.bend = bends;
+						bends = ok.length ? ok : null;
+					}
+					if (bends) n.bend = bends;
 				}
+			}
+			// a pitch change that comes with a new attack is the next note, not a bend
+			{
+				const extra = [];
+				for (const n of notes) {
+					if (!n.bend || n.bend.length == 0 || !(n.dur > 0)) continue;
+					const pts = n.bend.map(([fr, semi, jump]) => [n.t + fr * n.dur, semi, jump]);
+					const end = n.t + n.dur;
+					let cur = n, base = 0, keep = [];
+					for (const [t, semi, jump] of pts) {
+						const f = Math.round(t * FPS);
+						let o = 0;
+						for (let g = f - 4; g <= f + 2; g++) o = Math.max(o, onsetAt(n.midi + semi, g));
+						// a jump with no attack: the curve lost the note, the rest is not to be trusted
+						if (jump && !(o > 0.12 && t - cur.t > 0.05 && end - t > 0.05)) break;
+						if ((o > 0.3 || jump) && t - cur.t > 0.05 && end - t > 0.05) {
+							cur.dur = t - cur.t;
+							cur.bend = keep.length ? keep.map(([bt, bs]) => [+((bt - cur.t) / cur.dur).toFixed(3), bs - base]) : undefined;
+							const next = Object.assign({}, n, { t, dur: end - t, midi: n.midi + semi, onset: o, bend: undefined });
+							extra.push(next);
+							cur = next; base = semi; keep = [];
+						}
+						else keep.push([t, semi]);
+					}
+					cur.bend = keep.length ? keep.map(([bt, bs]) => [+((bt - cur.t) / (end - cur.t)).toFixed(3), bs - base]) : undefined;
+					if (cur.bend && cur.bend.every(([, bs]) => bs == 0)) cur.bend = undefined;
+					if (!cur.bend) delete cur.bend;
+					if (cur != n && n.bend === undefined) delete n.bend;
+				}
+				for (const n of notes) if (n.bend === undefined) delete n.bend;
+				if (extra.length) notes = notes.concat(extra).sort((a, b) => a.t - b.t || a.midi - b.midi);
 			}
 			// key from the notes themselves
 			const hist = new Float64Array(12);
@@ -1707,7 +1984,7 @@
 			// Precision: how strict the notes are. High keeps the parts a musician would write (on key,
 			// clear attacks, no ghosts or background); low keeps everything that was heard.
 			const precision = opts.precision == undefined ? 0.7 : Math.max(0, Math.min(1, opts.precision));
-			notes = cleanNotes(notes, key, precision);
+			notes = cleanNotes(notes, key, precision, opts.debugDrops);
 			// The beat tracker can lock onto the off-beats (loud open hats in house music). Kicks and
 			// bass notes say where the beat is: if they sit between the beats, move the beats there.
 			{
@@ -1778,7 +2055,7 @@
 			const chords = [];
 			const chordBeats = bpb == 4 ? 2 : bpb;
 			for (let i = startBeat; i + 1 < beats.length && beats[i] < x.length / SR; i += chordBeats) {
-				const c = chordFor(notes.filter(n => n.role != "lead"), beats[i], beats[Math.min(beats.length - 1, i + chordBeats)]);
+				const c = chordFor(notes.filter(n => n.role != "lead"), beats[i], beats[Math.min(beats.length - 1, i + chordBeats)], key);
 				const prev = chords[chords.length - 1];
 				if (c && prev && prev.name == c.name) { prev.dur = beats[Math.min(beats.length - 1, i + chordBeats)] - prev.t; continue; }
 				if (c) chords.push({ t: beats[i], dur: beats[Math.min(beats.length - 1, i + chordBeats)] - beats[i], name: c.name, root: c.root, type: c.type });
@@ -1793,7 +2070,7 @@
 				timbre[role] = { bright: +avg("bright").toFixed(3), pure: +avg("pure").toFixed(3), sustain: +avg("sustain").toFixed(3), meanDur: +meanDur.toFixed(3), glides: list.filter(n => n.bend).length / list.length };
 			}
 			progress(0.98, "Arranging the parts");
-			const arr = arrange({ act, frames, onsetAt, notes, hits: drums.hits, beats, startBeat, bpb, chords, duration: x.length / SR, sens: opts.notes, precision });
+			const arr = arrange({ act, frames, onsetAt, notes, hits: drums.hits, beats, startBeat, bpb, chords, duration: x.length / SR, sens: opts.notes, precision, fillChords: opts.fillChords, fillMin: opts.fillMin });
 			progress(0.99, "Measuring the instruments");
 			await pause();
 			const instruments = opts.instruments === false ? {} : extractInstruments(x, notes, drums.hits, spec.tuning);
@@ -1811,7 +2088,7 @@
 		// the whole song (no fragments, no gaps), block chords from the harmony, and drum patterns
 		// made consistent with how they repeat.
 		function arrange(c) {
-			const opts_swing = c.swing;
+			const opts_swing = c.swing, opts_fill = c.fillChords;
 			const { act, frames, onsetAt, hits, beats, startBeat, bpb, chords, duration } = c, sens = c.sens == undefined ? 0.5 : c.sens, prec = c.precision == undefined ? 0.7 : c.precision;
 			const LEAD_VEL = 0.7, BASS_VEL = 0.75, CH_SHORT = 3;
 			// chords are struck together: a lone note in the chord part, up where the melody plays and
@@ -1902,6 +2179,19 @@
 			// one part: the heard notes on the grid, cleaned up
 			function part(role, mono) {
 				let list = notes.filter(n => n.role == role).map(n => ({ midi: n.midi, s0: stepOf(n.t), s1: Math.max(stepOf(n.t) + 1, stepOf(n.t + n.dur)), vel: n.vel, onset: n.onset || 0, bend: n.bend, dur: n.dur }));
+				// a pad or a bowed chord swells in: it is heard late, but it was played on the beat (or the
+				// half beat) before
+				if (role == "chords") {
+					const stepSec = (stepT[Math.min(nSteps, lastStep)] - stepT[0]) / Math.max(1, Math.min(nSteps, lastStep));
+					const reach = Math.max(1, Math.round(0.3 / stepSec));
+					for (const n of list) {
+						if (n.onset >= 0.12 || n.dur < 0.4) continue;
+						const rel = n.s0 - firstStep;
+						const beatStart = firstStep + Math.floor(rel / S) * S, halfStart = firstStep + Math.floor(rel / (S / 2)) * (S / 2);
+						const to = n.s0 - beatStart <= reach ? beatStart : n.s0 - halfStart <= reach ? halfStart : n.s0;
+						if (to >= 0 && to < n.s0) n.s0 = Math.round(to);
+					}
+				}
 				// tiny quiet notes are noise
 				list = list.filter(n => !(n.dur < Math.max(0.06, 0.45 * (stepT[1] - stepT[0])) && n.vel < 0.45));
 				if (role == "chords") {
@@ -1950,7 +2240,13 @@
 					const out = [];
 					for (const n of list) {
 						const prev = out[out.length - 1];
-						if (prev && n.s0 <= prev.s0) { if (n.vel > prev.vel) out[out.length - 1] = n; continue; }
+						if (prev && n.s0 <= prev.s0) {
+							// an octave (or twelfth) apart: the bass is the lower one, the melody the upper one
+							const d = Math.abs(n.midi - prev.midi), harm = d == 12 || d == 19 || d == 24;
+							const better = harm ? (role == "bass" ? n.midi < prev.midi : n.midi > prev.midi) : n.vel > prev.vel;
+							if (better) out[out.length - 1] = n;
+							continue;
+						}
 						if (prev && prev.s1 > n.s0) prev.s1 = n.s0;
 						out.push(n);
 					}
@@ -2003,7 +2299,56 @@
 			// completing can put two bass notes on one step: keep one voice
 			const monoAgain = (list) => { const res = []; for (const n of list) { const prev = res[res.length - 1]; if (prev && n.s0 == prev.s0) { if (!n.filled && prev.filled) res[res.length - 1] = n; continue; } if (prev && prev.s1 > n.s0) prev.s1 = n.s0; res.push(n); } return res; };
 			const bass = out(monoAgain(bassL), "bass"), lead = out(monoAgain(leadL), "lead");
-			const chordNotes = out(part("chords", false), "chords");
+			// Chords as they were played: a strike of two or more notes gets the chord's missing tones
+			// back (a chord note on the bass's overtone, or under the melody, is easy to lose) where the
+			// recording has that pitch, and every note of a strike rings until the next strike for as
+			// long as it can be heard (a piano chord dies away, but it was held).
+			function fillChords(list) {
+				if (!list.length || !chords.length || opts_fill === false) return list;
+				const norm = pct(E, 0.97) || 1, fillMin = c.fillMin || 0.25;
+				const ev = (p, s0, s1) => { let v = 0; for (let s = s0; s < Math.min(lastStep, s1); s++) v = Math.max(v, E[s * NP + p]); return v; };
+				const groups = [];
+				for (const n of list.slice().sort((a, b) => a.s0 - b.s0)) {
+					const g = groups[groups.length - 1];
+					if (g && n.s0 - g.s0 <= 1) g.notes.push(n); else groups.push({ s0: n.s0, notes: [n] });
+				}
+				const added = [];
+				groups.forEach((g, gi) => {
+					const next = gi + 1 < groups.length ? groups[gi + 1].s0 : lastStep;
+					const s1 = Math.max(...g.notes.map(n => n.s1));
+					if (g.notes.length >= 2) {
+						const tones = chordAt(stepT[g.s0] + 0.03);
+						// (only where the strike already agrees with the chord name)
+						if (tones && g.notes.filter(n => tones.includes(n.midi % 12)).length >= 2) {
+							const have = new Set(g.notes.map(n => n.midi % 12));
+							const lo = Math.min(...g.notes.map(n => n.midi)), hi = Math.max(...g.notes.map(n => n.midi));
+							const vel = g.notes.reduce((a, n) => a + n.vel, 0) / g.notes.length;
+							for (const pc of tones) {
+								if (have.has(pc)) continue;
+								let best = null;
+								for (let m = lo - 5; m <= hi + 5; m++) {
+									const p = m - P0;
+									if (((m % 12) + 12) % 12 != pc || p < 0 || p >= NP) continue;
+									const v = ev(p, g.s0, Math.min(s1, g.s0 + 2)) * (m >= lo && m <= hi ? 1.3 : 1);
+									if (!best || v > best.v) best = { m, v };
+								}
+								if (best && best.v >= fillMin * norm) added.push({ midi: best.m, s0: g.s0, s1, vel: vel * 0.85, onset: 0, filled: true, _g: gi });
+							}
+						}
+					}
+					for (const n of g.notes) {
+						const p = n.midi - P0;
+						if (p < 0 || p >= NP || n.s1 >= next) continue;
+						const start = ev(p, n.s0, n.s0 + 2);
+						let e = n.s1;
+						while (e < next && E[e * NP + p] >= 0.3 * start && E[e * NP + p] > 0.04 * norm) e++;
+						n.s1 = e;
+					}
+				});
+				for (const a of added) a.s1 = Math.max(a.s1, Math.max(...groups[a._g].notes.map(n => n.s1)));
+				return list.concat(added.map(a => { delete a._g; return a; })).sort((a, b) => a.s0 - b.s0 || a.midi - b.midi);
+			}
+			const chordNotes = out(fillChords(part("chords", false)), "chords");
 			// ---- drums: on the grid, one hit per drum per step, and the repeating pattern kept whole
 			const kinds = {};
 			for (const hh of hits) {
@@ -3249,11 +3594,16 @@
 			const pitch = n.midi - basePitch;
 			const note = { start, end, pitches: [pitch], size: sizeOf(n.vel) };
 			if (options.bends !== false && n.bend && n.bend.length) {
-				const len = end - start;
+				// the pitch holds, then slides into the new one over a thirty-second note (BeepBox pins
+				// glide in a straight line between them, so the hold needs its own pin)
+				const len = end - start, slide = Math.max(1, Math.round(ppb / 8));
 				const pins = [{ time: 0, interval: 0, size: note.size }];
 				for (const [frac, semi] of n.bend) {
 					const time = Math.round(frac * len);
-					if (time > pins[pins.length - 1].time && time < len) pins.push({ time, interval: semi, size: note.size });
+					const last = pins[pins.length - 1];
+					if (time <= last.time || time >= len || semi == last.interval) continue;
+					if (time - slide > last.time) pins.push({ time: time - slide, interval: last.interval, size: note.size });
+					pins.push({ time, interval: semi, size: note.size });
 				}
 				pins.push({ time: len, interval: pins[pins.length - 1].interval, size: note.size });
 				if (pins.length > 2) note.pins = pins;
